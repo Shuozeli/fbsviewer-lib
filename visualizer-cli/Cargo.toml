@@ -1,0 +1,19 @@
+[package]
+name = "flatbuf-visualizer-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for visualizing FlatBuffers binary encodings"
+
+[[bin]]
+name = "flatbuf-viz"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+flatbuf-visualizer-core = { path = "../visualizer-core" }
+flatc-rs-compiler = { git = "https://github.com/Shuozeli/flatbuffers-rs.git" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

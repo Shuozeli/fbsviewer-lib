@@ -1,0 +1,61 @@
+name: Encoding/Decoding Bug
+description: Report a bug with FlatBuffers encoding or decoding (schema + data required)
+title: "[Encoding/Decoding] "
+labels: ["bug", "encoding-decoding"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What went wrong with encoding or decoding?
+      placeholder: Describe the bug...
+    validations:
+      required: true
+
+  - type: textarea
+    id: fbs-schema
+    attributes:
+      label: FBS Schema
+      description: Paste the `.fbs` schema that reproduces the issue.
+      render: flatbuffers
+    validations:
+      required: true
+
+  - type: textarea
+    id: input-data
+    attributes:
+      label: Input Data
+      description: Paste the JSON input or hex-encoded binary that triggers the bug.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: Expected Result
+      description: What should the correct output look like?
+      placeholder: The correct encoding/decoding output...
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual-result
+    attributes:
+      label: Actual Result
+      description: What did the tool actually produce? Include screenshots or text output.
+      placeholder: The incorrect output or error message...
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1. Load the schema above
+        2. Encode the JSON data
+        3. Observe the incorrect output
+    validations:
+      required: false
