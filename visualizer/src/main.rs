@@ -5,8 +5,6 @@ mod structure_view;
 mod syntax;
 mod templates;
 mod view;
-#[cfg(target_arch = "wasm32")]
-mod wasm_libc_shim;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {

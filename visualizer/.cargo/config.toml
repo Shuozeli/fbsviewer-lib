@@ -1,6 +1,0 @@
-[target.wasm32-unknown-unknown]
-linker = "rust-lld"
-
-[env]
-CC_wasm32_unknown_unknown = "/tmp/wasi-sdk-25.0-arm64-linux/bin/clang"
-CFLAGS_wasm32_unknown_unknown = "--target=wasm32-unknown-unknown -fvisibility=default -msimd128 -nostdlib -isystem /home/cyuan/projects/flatbuffers/fbsviewer-lib/visualizer/wasm-sysroot/include"
