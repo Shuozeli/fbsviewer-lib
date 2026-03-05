@@ -1,0 +1,100 @@
+# fbsviewer-lib
+
+> Interactive FlatBuffers binary encoding visualizer. See what every byte means
+> in a FlatBuffer -- vtables, scalars, strings, vectors, structs, padding --
+> color-coded and cross-linked between hex view and structure tree.
+
+Live demo: https://fbsviewer.shuozeli.com/
+Source: https://github.com/Shuozeli/fbsviewer-lib
+Deploy repo (pre-built WASM): https://github.com/Shuozeli/fbsviewer
+
+## What This Tool Does
+
+FlatBuffers binary encoding is opaque. Unlike Protocol Buffers (which are
+length-prefixed and straightforward to decode), FlatBuffers uses vtables and
+signed/unsigned offsets that make the byte layout non-obvious. This tool takes a
+`.fbs` schema and a FlatBuffer (JSON or raw hex), compiles the schema, encodes
+the data, and shows you the role of every byte.
+
+Use cases:
+- Debugging FlatBuffers encoding issues (fields reading as zero, garbled strings)
+- Learning how FlatBuffers binary format works (vtables, offsets, alignment)
+- Verifying binary compatibility between implementations
+- Inspecting binaries produced by any FlatBuffers implementation (C++ flatc, etc.)
+
+## Architecture
+
+Three Rust crates in a Cargo workspace:
+
+### visualizer-core (portable library, no GUI)
+
+Binary walker, JSON encoder/decoder, hex parser, schema loader. This is the core
+engine that parses FlatBuffers binaries into annotated byte regions.
+
+- `binary_walker.rs` -- Walk a FlatBuffer binary using a schema, producing annotated regions
+- `json_encoder.rs` -- JSON -> FlatBuffers binary encoding (pure Rust)
+- `json_decoder.rs` -- Annotated regions -> JSON decoding
+- `region.rs` -- Byte region types (VTable, Table, Scalar, String, Vector, Struct, Padding, etc.)
+- `hex_parse.rs` -- Hex string -> bytes parser
+- `schema_loader.rs` -- JSON string -> Schema loader
+
+### visualizer (egui GUI app, native + WASM)
+
+Interactive GUI built with egui. Compiles to native desktop (eframe) and
+WebAssembly (trunk + wasm-bindgen). Uses MVU (Model-View-Update) architecture.
+
+- `state.rs` -- Pure AppState, Command enum, Effect enum, dispatch() function
+- `view.rs` -- render_view() extracts egui rendering, emits Commands
+- `app.rs` -- Thin egui shell: dispatch loop, effect execution
+- `hex_view.rs` -- Color-coded hex byte display with hover/click highlighting
+- `structure_view.rs` -- Collapsible tree view of binary structure
+- `templates.rs` -- 12 built-in example schemas (Monster, unions, vectors, etc.)
+
+### visualizer-cli (CLI binary inspection tool)
+
+Command-line tool for inspecting FlatBuffers binaries without a GUI.
+
+- Binary: `flatbuf-viz`
+- Input: `.fbs` schema file + binary/JSON/hex data file
+- Output: structured text showing byte regions, field values, and offsets
+
+## Dependencies
+
+Depends on [flatbuffers-rs](https://github.com/Shuozeli/flatbuffers-rs) for:
+- `flatc-rs-compiler` -- Schema compilation (.fbs -> parsed Schema)
+- `flatc-rs-schema` -- Schema type definitions
+- `flatc-rs-fbs-gen` -- Random schema generation (for template examples)
+- `flatc-rs-data-gen` -- Random data generation (for template examples)
+
+Uses `flatbuffers = "25.12.19"` from crates.io for the official Rust runtime.
+
+## Build
+
+```bash
+# Native desktop app
+cargo run -p flatbuf-visualizer
+
+# Run tests (130 tests)
+cargo test --workspace
+
+# WASM web app
+cd visualizer && trunk build --release --public-url ./
+```
+
+## Key Features
+
+- Paste `.fbs` schema + JSON or hex data
+- Pure Rust JSON-to-FlatBuffers encoder (works on native and WASM)
+- Hex view with per-byte coloring by region type
+- Structure tree with collapsible hierarchy
+- Bidirectional hover highlighting with click-to-lock
+- Data format dropdown (JSON / Hex) with auto-conversion
+- 12 built-in template examples
+- Decoded JSON view
+- File upload support (native: file dialogs, WASM: browser upload)
+
+## Optional: Detailed Documentation
+
+- [Blog post: FlatBuffers Binary Visualizer](https://github.com/Shuozeli/fbsviewer-lib/blob/main/docs/blogposts/flatbuffers-binary-visualizer.md)
+- [README](https://github.com/Shuozeli/fbsviewer-lib/blob/main/README.md)
+- [Issue templates](https://github.com/Shuozeli/fbsviewer-lib/issues/new/choose)
