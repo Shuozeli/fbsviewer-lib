@@ -418,10 +418,9 @@ impl AppState {
                         self.status_message = "Share link copied to clipboard.".to_string();
                         self.toast_message = Some("Link copied to clipboard!".to_string());
                         self.toast_frames_remaining = 120; // ~2 seconds at 60fps
-                        effects.push(Effect::SetUrlQueryParam {
-                            key: "data".to_string(),
-                            value: encoded.clone(),
-                        });
+                        if let Some(effect) = self.build_permalink_url_effect() {
+                            effects.push(effect);
+                        }
                         effects.push(Effect::CopyToClipboard { text: encoded });
                     }
                     Err(e) => {
@@ -524,6 +523,11 @@ impl AppState {
                 self.encode_error = None;
                 self.status_message =
                     format!("{data_len} bytes, {count} regions. Hover to explore.");
+
+                // Keep URL in sync with current state
+                if let Some(effect) = self.build_permalink_url_effect() {
+                    effects.push(effect);
+                }
             }
 
             Command::WalkError(err) => {
@@ -587,6 +591,22 @@ impl AppState {
     }
 
     /// Tick down the toast notification timer. Call once per frame.
+    /// Build a `SetUrlQueryParam` effect encoding the current state as a permalink.
+    /// Returns `None` if encoding fails (non-fatal).
+    fn build_permalink_url_effect(&self) -> Option<Effect> {
+        let data = permalink::PermalinkData {
+            schema_text: self.schema_text.clone(),
+            data_text: self.data_text.clone(),
+            is_hex_format: self.data_format == DataFormat::Binary,
+        };
+        permalink::encode(&data)
+            .ok()
+            .map(|encoded| Effect::SetUrlQueryParam {
+                key: "data".to_string(),
+                value: encoded,
+            })
+    }
+
     pub fn tick_toast(&mut self) {
         if self.toast_frames_remaining > 0 {
             self.toast_frames_remaining -= 1;
