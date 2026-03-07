@@ -175,8 +175,8 @@ pub enum Effect {
     GenerateRandomSchemaAndData { seed: u64 },
     /// Copy text to the system clipboard (URL for sharing).
     CopyToClipboard { text: String },
-    /// Update the browser URL hash (WASM only, no-op on native).
-    SetUrlHash { hash: String },
+    /// Update a browser URL query parameter (WASM only, no-op on native).
+    SetUrlQueryParam { key: String, value: String },
 }
 
 impl std::fmt::Display for Effect {
@@ -190,7 +190,7 @@ impl std::fmt::Display for Effect {
                 write!(f, "GenerateRandomSchemaAndData(seed={seed})")
             }
             Effect::CopyToClipboard { .. } => write!(f, "CopyToClipboard"),
-            Effect::SetUrlHash { .. } => write!(f, "SetUrlHash"),
+            Effect::SetUrlQueryParam { .. } => write!(f, "SetUrlQueryParam"),
         }
     }
 }
@@ -418,8 +418,9 @@ impl AppState {
                         self.status_message = "Share link copied to clipboard.".to_string();
                         self.toast_message = Some("Link copied to clipboard!".to_string());
                         self.toast_frames_remaining = 120; // ~2 seconds at 60fps
-                        effects.push(Effect::SetUrlHash {
-                            hash: encoded.clone(),
+                        effects.push(Effect::SetUrlQueryParam {
+                            key: "data".to_string(),
+                            value: encoded.clone(),
                         });
                         effects.push(Effect::CopyToClipboard { text: encoded });
                     }
@@ -772,7 +773,7 @@ mod tests {
                 }
             }
             // Platform effects are no-ops in tests
-            Effect::CopyToClipboard { .. } | Effect::SetUrlHash { .. } => None,
+            Effect::CopyToClipboard { .. } | Effect::SetUrlQueryParam { .. } => None,
         }
     }
 
@@ -1116,8 +1117,8 @@ mod tests {
         assert!(
             effects
                 .iter()
-                .any(|e| matches!(e, Effect::SetUrlHash { .. })),
-            "CopyShareLink should produce SetUrlHash effect"
+                .any(|e| matches!(e, Effect::SetUrlQueryParam { .. })),
+            "CopyShareLink should produce SetUrlQueryParam effect"
         );
         assert!(state.status_message.contains("clipboard"));
     }
@@ -1134,10 +1135,10 @@ mod tests {
         let encoded = effects
             .iter()
             .find_map(|e| match e {
-                Effect::SetUrlHash { hash } => Some(hash.clone()),
+                Effect::SetUrlQueryParam { key, value } if key == "data" => Some(value.clone()),
                 _ => None,
             })
-            .expect("should have SetUrlHash effect");
+            .expect("should have SetUrlQueryParam effect with key 'data'");
 
         // Decode into fresh state
         let mut state2 = AppState::default();

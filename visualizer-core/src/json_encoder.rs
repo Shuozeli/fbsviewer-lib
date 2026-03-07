@@ -6,7 +6,7 @@
 use flatc_rs_schema::{BaseType, Enum, Field, Object, Schema, Type};
 use serde_json::Value;
 
-use crate::binary_walker::scalar_byte_size;
+use flatc_rs_annotator::scalar_byte_size;
 
 const MAX_DEPTH: usize = 64;
 

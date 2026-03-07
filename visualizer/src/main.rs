@@ -29,17 +29,30 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// Read the URL hash fragment, stripping the leading '#'.
+/// Read the `data` query parameter from the URL.
+///
+/// Supports `?data=...` for permalink payloads. Designed for extensibility --
+/// future formats (e.g. protobuf) can use additional params like `?type=protobuf&data=...`.
 #[cfg(target_arch = "wasm32")]
-fn read_url_hash() -> Option<String> {
+fn read_url_data_param() -> Option<String> {
     let window = web_sys::window()?;
-    let hash = window.location().hash().ok()?;
-    let trimmed = hash.strip_prefix('#').unwrap_or(&hash);
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
+    let search = window.location().search().ok()?;
+    // Parse query string manually (no URL API needed)
+    let query = search.strip_prefix('?').unwrap_or(&search);
+    for param in query.split('&') {
+        if let Some(value) = param.strip_prefix("data=") {
+            let decoded = js_sys::decode_uri_component(value)
+                .ok()
+                .map(|s| s.as_string())
+                .flatten();
+            if let Some(v) = decoded {
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+        }
     }
+    None
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -65,13 +78,18 @@ fn main() {
             }
         }
 
-        let url_hash = read_url_hash();
+        let permalink_data = read_url_data_param();
 
         eframe::WebRunner::new()
             .start(
                 canvas,
                 web_options,
-                Box::new(move |cc| Ok(Box::new(app::VisualizerApp::new_with_hash(cc, url_hash)))),
+                Box::new(move |cc| {
+                    Ok(Box::new(app::VisualizerApp::new_with_permalink(
+                        cc,
+                        permalink_data,
+                    )))
+                }),
             )
             .await
             .expect("failed to start eframe");

@@ -1,6 +1,6 @@
 use serde_json::{json, Map, Value};
 
-use crate::region::{AnnotatedRegion, RegionType};
+use flatc_rs_annotator::{AnnotatedRegion, RegionType};
 
 /// Reconstruct a JSON object from walker annotations.
 ///

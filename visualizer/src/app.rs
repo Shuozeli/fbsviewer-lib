@@ -38,12 +38,12 @@ const MAX_DISPATCH_DEPTH: usize = 8;
 
 impl VisualizerApp {
     pub fn new(#[allow(unused_variables)] cc: &eframe::CreationContext<'_>) -> Self {
-        Self::new_with_hash(cc, None)
+        Self::new_with_permalink(cc, None)
     }
 
-    pub fn new_with_hash(
+    pub fn new_with_permalink(
         #[allow(unused_variables)] cc: &eframe::CreationContext<'_>,
-        url_hash: Option<String>,
+        permalink_data: Option<String>,
     ) -> Self {
         // Try to load CJK font on native
         #[cfg(not(target_arch = "wasm32"))]
@@ -83,9 +83,9 @@ impl VisualizerApp {
             pending_schema_upload: std::sync::Arc::new(std::sync::Mutex::new(None::<Vec<u8>>)),
         };
 
-        // Bootstrap: load from URL hash if present, otherwise compile demo data
-        if let Some(hash) = url_hash.filter(|h| !h.is_empty()) {
-            app.dispatch(Command::LoadFromPermalink(hash));
+        // Bootstrap: load from permalink query param if present, otherwise compile demo data
+        if let Some(data) = permalink_data.filter(|d| !d.is_empty()) {
+            app.dispatch(Command::LoadFromPermalink(data));
         } else {
             app.dispatch(Command::CompileAndEncode);
         }
@@ -199,7 +199,11 @@ impl VisualizerApp {
                     if let Some(window) = web_sys::window() {
                         let origin = window.location().origin().unwrap_or_default();
                         let pathname = window.location().pathname().unwrap_or_default();
-                        let full_url = format!("{origin}{pathname}#{text}");
+                        // URI-encode the data param for safe embedding in URL
+                        let encoded = js_sys::encode_uri_component(&text)
+                            .as_string()
+                            .unwrap_or(text);
+                        let full_url = format!("{origin}{pathname}?data={encoded}");
                         let clipboard = window.navigator().clipboard();
                         let _ = clipboard.write_text(&full_url);
                     }
@@ -210,16 +214,28 @@ impl VisualizerApp {
                 }
             }
 
-            Effect::SetUrlHash { hash } => {
+            Effect::SetUrlQueryParam { key, value } => {
                 #[cfg(target_arch = "wasm32")]
                 {
                     if let Some(window) = web_sys::window() {
-                        let _ = window.location().set_hash(&hash);
+                        let encoded = js_sys::encode_uri_component(&value)
+                            .as_string()
+                            .unwrap_or(value);
+                        let pathname = window.location().pathname().unwrap_or_default();
+                        let new_url = format!("{pathname}?{key}={encoded}");
+                        let _ = window.history().ok().and_then(|h| {
+                            h.replace_state_with_url(
+                                &wasm_bindgen::JsValue::NULL,
+                                "",
+                                Some(&new_url),
+                            )
+                            .ok()
+                        });
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let _ = hash;
+                    let _ = (key, value);
                 }
             }
 
