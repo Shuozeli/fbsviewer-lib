@@ -1,5 +1,6 @@
 mod app;
 mod hex_view;
+mod permalink;
 mod state;
 mod structure_view;
 mod syntax;
@@ -28,6 +29,19 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+/// Read the URL hash fragment, stripping the leading '#'.
+#[cfg(target_arch = "wasm32")]
+fn read_url_hash() -> Option<String> {
+    let window = web_sys::window()?;
+    let hash = window.location().hash().ok()?;
+    let trimmed = hash.strip_prefix('#').unwrap_or(&hash);
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 fn main() {
     console_error_panic_hook::set_once();
@@ -51,11 +65,13 @@ fn main() {
             }
         }
 
+        let url_hash = read_url_hash();
+
         eframe::WebRunner::new()
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(app::VisualizerApp::new(cc)))),
+                Box::new(move |cc| Ok(Box::new(app::VisualizerApp::new_with_hash(cc, url_hash)))),
             )
             .await
             .expect("failed to start eframe");

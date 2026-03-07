@@ -75,6 +75,31 @@ pub fn render_view(ctx: &egui::Context, state: &mut AppState) -> ViewOutput {
         render_wide_layout(ctx, state, &mut commands);
     }
 
+    // -- Toast notification (auto-dismissing) --
+    if let Some(msg) = &state.toast_message {
+        let screen = ctx.screen_rect();
+        let toast_width = 250.0;
+        let toast_pos = egui::pos2(screen.center().x - toast_width / 2.0, screen.top() + 50.0);
+        egui::Area::new(egui::Id::new("toast_notification"))
+            .fixed_pos(toast_pos)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(50, 160, 90))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(16, 10))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(msg)
+                                .color(egui::Color32::WHITE)
+                                .strong(),
+                        );
+                    });
+            });
+        ctx.request_repaint();
+    }
+    state.tick_toast();
+
     ViewOutput {
         commands,
         load_schema_file,
@@ -306,6 +331,17 @@ fn render_toolbar(
                 seed: state.random_seed_counter,
             });
         }
+    }
+
+    ui.separator();
+    let share_btn = egui::Button::new(egui::RichText::new("Share").color(egui::Color32::WHITE))
+        .fill(egui::Color32::from_rgb(74, 130, 220));
+    if ui
+        .add(share_btn)
+        .on_hover_text("Copy a permalink to clipboard (schema + data encoded in URL)")
+        .clicked()
+    {
+        commands.push(Command::CopyShareLink);
     }
 
     ui.separator();

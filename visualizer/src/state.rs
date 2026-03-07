@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 
 use flatbuf_visualizer_core::{AnnotatedRegion, Schema};
 
+use crate::permalink;
 use crate::templates;
 
 // ---------------------------------------------------------------------------
@@ -81,6 +82,10 @@ pub enum Command {
     LoadSchemaText(String),
     SetBinaryData(Vec<u8>),
 
+    // -- Sharing --
+    CopyShareLink,
+    LoadFromPermalink(String),
+
     // -- Random generation --
     GenerateRandom {
         seed: u64,
@@ -121,6 +126,8 @@ impl std::fmt::Display for Command {
             Command::HoverRegion(r) => write!(f, "HoverRegion({r:?})"),
             Command::ClickRegion(idx) => write!(f, "ClickRegion({idx})"),
             Command::UnlockRegion => write!(f, "UnlockRegion"),
+            Command::CopyShareLink => write!(f, "CopyShareLink"),
+            Command::LoadFromPermalink(_) => write!(f, "LoadFromPermalink(...)"),
             Command::LoadSchemaText(_) => write!(f, "LoadSchemaText(...)"),
             Command::SetBinaryData(d) => write!(f, "SetBinaryData({} bytes)", d.len()),
             Command::SchemaCompiled { root_type_name, .. } => {
@@ -166,6 +173,10 @@ pub enum Effect {
     },
     /// Generate a random schema and matching JSON data. Result: `RandomGenerated` or `RandomGenerateError`.
     GenerateRandomSchemaAndData { seed: u64 },
+    /// Copy text to the system clipboard (URL for sharing).
+    CopyToClipboard { text: String },
+    /// Update the browser URL hash (WASM only, no-op on native).
+    SetUrlHash { hash: String },
 }
 
 impl std::fmt::Display for Effect {
@@ -178,6 +189,8 @@ impl std::fmt::Display for Effect {
             Effect::GenerateRandomSchemaAndData { seed } => {
                 write!(f, "GenerateRandomSchemaAndData(seed={seed})")
             }
+            Effect::CopyToClipboard { .. } => write!(f, "CopyToClipboard"),
+            Effect::SetUrlHash { .. } => write!(f, "SetUrlHash"),
         }
     }
 }
@@ -238,6 +251,12 @@ pub struct AppState {
     /// None = default (depth < 2 open), Some(true) = all open, Some(false) = all closed.
     pub structure_all_open: Option<bool>,
 
+    // -- Toast notification --
+    /// Temporary toast message shown briefly (e.g. "Link copied!").
+    pub toast_message: Option<String>,
+    /// Frame counter for auto-dismissing the toast.
+    pub toast_frames_remaining: u32,
+
     // -- Random generation --
     pub random_seed_counter: u64,
 
@@ -267,6 +286,8 @@ impl Default for AppState {
             status_message: "Ready.".to_string(),
             structure_tree_gen: 0,
             structure_all_open: None,
+            toast_message: None,
+            toast_frames_remaining: 0,
             random_seed_counter: 0,
             event_log: VecDeque::new(),
         }
@@ -385,6 +406,49 @@ impl AppState {
             Command::UnlockRegion => {
                 self.locked_region = None;
             }
+
+            Command::CopyShareLink => {
+                let data = permalink::PermalinkData {
+                    schema_text: self.schema_text.clone(),
+                    data_text: self.data_text.clone(),
+                    is_hex_format: self.data_format == DataFormat::Binary,
+                };
+                match permalink::encode(&data) {
+                    Ok(encoded) => {
+                        self.status_message = "Share link copied to clipboard.".to_string();
+                        self.toast_message = Some("Link copied to clipboard!".to_string());
+                        self.toast_frames_remaining = 120; // ~2 seconds at 60fps
+                        effects.push(Effect::SetUrlHash {
+                            hash: encoded.clone(),
+                        });
+                        effects.push(Effect::CopyToClipboard { text: encoded });
+                    }
+                    Err(e) => {
+                        self.status_message = format!("Failed to create share link: {e}");
+                    }
+                }
+            }
+
+            Command::LoadFromPermalink(encoded) => match permalink::decode(&encoded) {
+                Ok(data) => {
+                    self.schema_text = data.schema_text;
+                    self.data_text = data.data_text;
+                    self.data_format = if data.is_hex_format {
+                        DataFormat::Binary
+                    } else {
+                        DataFormat::Json
+                    };
+                    self.root_type_name.clear();
+                    self.locked_region = None;
+                    self.status_message = "Loaded from shared link.".to_string();
+                    effects.push(Effect::CompileSchema {
+                        source: self.schema_text.clone(),
+                    });
+                }
+                Err(e) => {
+                    self.status_message = format!("Failed to load shared link: {e}");
+                }
+            },
 
             // ----- Side effect results -----
             Command::SchemaCompiled {
@@ -518,6 +582,16 @@ impl AppState {
                 .and_then(|t| t.name.as_deref())
                 .unwrap_or("")
                 .to_string()
+        }
+    }
+
+    /// Tick down the toast notification timer. Call once per frame.
+    pub fn tick_toast(&mut self) {
+        if self.toast_frames_remaining > 0 {
+            self.toast_frames_remaining -= 1;
+            if self.toast_frames_remaining == 0 {
+                self.toast_message = None;
+            }
         }
     }
 
@@ -697,6 +771,8 @@ mod tests {
                     Err(e) => Some(Command::RandomGenerateError(e.to_string())),
                 }
             }
+            // Platform effects are no-ops in tests
+            Effect::CopyToClipboard { .. } | Effect::SetUrlHash { .. } => None,
         }
     }
 
@@ -1020,5 +1096,69 @@ mod tests {
                 "Template {i} should produce annotations"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Permalink tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_copy_share_link_produces_effects() {
+        let mut state = AppState::default();
+        run_with_effects(&mut state, Command::CompileAndEncode);
+        let effects = state.dispatch(Command::CopyShareLink);
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::CopyToClipboard { .. })),
+            "CopyShareLink should produce CopyToClipboard effect"
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::SetUrlHash { .. })),
+            "CopyShareLink should produce SetUrlHash effect"
+        );
+        assert!(state.status_message.contains("clipboard"));
+    }
+
+    #[test]
+    fn test_permalink_round_trip_through_state() {
+        let mut state = AppState::default();
+        state.schema_text = "table T { x:int; } root_type T;".to_string();
+        state.data_text = r#"{"x": 42}"#.to_string();
+        state.data_format = DataFormat::Json;
+
+        // Encode
+        let effects = state.dispatch(Command::CopyShareLink);
+        let encoded = effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::SetUrlHash { hash } => Some(hash.clone()),
+                _ => None,
+            })
+            .expect("should have SetUrlHash effect");
+
+        // Decode into fresh state
+        let mut state2 = AppState::default();
+        run_with_effects(&mut state2, Command::LoadFromPermalink(encoded));
+        assert_eq!(state2.schema_text, "table T { x:int; } root_type T;");
+        assert_eq!(state2.data_text, r#"{"x": 42}"#);
+        assert_eq!(state2.data_format, DataFormat::Json);
+        assert!(
+            state2.compiled_schema.is_some(),
+            "should auto-compile after loading permalink"
+        );
+        assert!(
+            state2.annotations.is_some(),
+            "should auto-walk after loading permalink"
+        );
+    }
+
+    #[test]
+    fn test_load_invalid_permalink() {
+        let mut state = AppState::default();
+        state.dispatch(Command::LoadFromPermalink("not-valid-data".to_string()));
+        assert!(state.status_message.contains("Failed"));
     }
 }

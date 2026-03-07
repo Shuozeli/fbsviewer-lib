@@ -38,6 +38,13 @@ const MAX_DISPATCH_DEPTH: usize = 8;
 
 impl VisualizerApp {
     pub fn new(#[allow(unused_variables)] cc: &eframe::CreationContext<'_>) -> Self {
+        Self::new_with_hash(cc, None)
+    }
+
+    pub fn new_with_hash(
+        #[allow(unused_variables)] cc: &eframe::CreationContext<'_>,
+        url_hash: Option<String>,
+    ) -> Self {
         // Try to load CJK font on native
         #[cfg(not(target_arch = "wasm32"))]
         let cjk_font_loaded = try_load_system_cjk_font(&cc.egui_ctx);
@@ -76,8 +83,12 @@ impl VisualizerApp {
             pending_schema_upload: std::sync::Arc::new(std::sync::Mutex::new(None::<Vec<u8>>)),
         };
 
-        // Bootstrap: compile the demo data
-        app.dispatch(Command::CompileAndEncode);
+        // Bootstrap: load from URL hash if present, otherwise compile demo data
+        if let Some(hash) = url_hash.filter(|h| !h.is_empty()) {
+            app.dispatch(Command::LoadFromPermalink(hash));
+        } else {
+            app.dispatch(Command::CompileAndEncode);
+        }
 
         app
     }
@@ -181,6 +192,36 @@ impl VisualizerApp {
                     self.dispatch(Command::WalkError(e.to_string()));
                 }
             },
+
+            Effect::CopyToClipboard { text } => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if let Some(window) = web_sys::window() {
+                        let origin = window.location().origin().unwrap_or_default();
+                        let pathname = window.location().pathname().unwrap_or_default();
+                        let full_url = format!("{origin}{pathname}#{text}");
+                        let clipboard = window.navigator().clipboard();
+                        let _ = clipboard.write_text(&full_url);
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    debug_log(&format!("Share link ({}B encoded): {text}", text.len()));
+                }
+            }
+
+            Effect::SetUrlHash { hash } => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().set_hash(&hash);
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let _ = hash;
+                }
+            }
 
             Effect::GenerateRandomSchemaAndData { seed } => {
                 let gen_config = flatc_rs_fbs_gen::GenConfig {
