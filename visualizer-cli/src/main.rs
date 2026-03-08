@@ -12,10 +12,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser)]
 #[command(name = "flatbuf-viz")]
-#[command(about = "Visualize FlatBuffers binary encoding with schema annotations")]
+#[command(about = "Visualize FlatBuffers and Protobuf binary encoding with schema annotations")]
 #[command(version = VERSION)]
 struct Cli {
-    /// Schema file: .fbs (compiled automatically) or .json (pre-compiled schema JSON).
+    /// Schema file: .fbs, .json (FlatBuffers), or .proto (Protobuf).
     #[arg(short = 's', long = "schema")]
     schema: PathBuf,
 
@@ -59,7 +59,7 @@ fn main() {
     let cli = Cli::parse();
 
     // 1. Load schema
-    let (schema, root_type_name) = match schema_input::load_schema(&cli.schema, &cli.include) {
+    let loaded = match schema_input::load_schema(&cli.schema, &cli.include) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: failed to load schema: {e}");
@@ -67,13 +67,7 @@ fn main() {
         }
     };
 
-    // 2. Determine root type
-    let root_type = cli.root_type.or(root_type_name).unwrap_or_else(|| {
-        eprintln!("error: no root type found in schema and --root-type not specified");
-        process::exit(1);
-    });
-
-    // 3. Load binary data
+    // 2. Load binary data
     let binary = match load_binary(&cli.binary, cli.hex) {
         Ok(b) => b,
         Err(e) => {
@@ -82,16 +76,49 @@ fn main() {
         }
     };
 
-    // 4. Walk binary
-    let regions = match flatbuf_visualizer_core::walk_binary(&binary, &schema, &root_type) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("error: walk failed: {e}");
-            process::exit(1);
+    // 3. Walk binary (dispatch based on schema type)
+    let regions = match loaded {
+        schema_input::LoadedSchema::FlatBuffers {
+            schema,
+            root_type_name,
+        } => {
+            let root_type = cli.root_type.or(root_type_name).unwrap_or_else(|| {
+                eprintln!("error: no root type found in schema and --root-type not specified");
+                process::exit(1);
+            });
+            match flatbuf_visualizer_core::walk_binary(&binary, &schema, &root_type) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("error: walk failed: {e}");
+                    process::exit(1);
+                }
+            }
+        }
+        schema_input::LoadedSchema::Protobuf {
+            schema,
+            message_names,
+        } => {
+            let root_message = cli.root_type.unwrap_or_else(|| {
+                if let Some(first) = message_names.first() {
+                    first.clone()
+                } else {
+                    eprintln!(
+                        "error: no messages found in proto schema and --root-type not specified"
+                    );
+                    process::exit(1);
+                }
+            });
+            match flatbuf_visualizer_core::walk_protobuf(&binary, &schema, &root_message) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("error: protobuf walk failed: {e}");
+                    process::exit(1);
+                }
+            }
         }
     };
 
-    // 5. Apply filters
+    // 4. Apply filters
     let filtered = filter::apply_filters(
         &regions,
         cli.byte_range.as_deref(),
@@ -99,7 +126,7 @@ fn main() {
         cli.region_type.as_deref(),
     );
 
-    // 6. Render output
+    // 5. Render output
     output::render(&regions, &filtered, &cli.format);
 }
 

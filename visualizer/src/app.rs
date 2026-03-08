@@ -6,7 +6,9 @@
 //! - Side effects (schema compilation, JSON encoding, binary walking)
 //! - Platform-specific code (file dialogs, WASM uploads, CJK font loading)
 
-use flatbuf_visualizer_core::{annotations_to_json, encode_json, parse_hex_bytes, walk_binary};
+use flatbuf_visualizer_core::{
+    annotations_to_json, encode_json, parse_hex_bytes, walk_binary, walk_protobuf,
+};
 
 use crate::state::{AppState, Command, Effect};
 use crate::view;
@@ -183,6 +185,51 @@ impl VisualizerApp {
                     let json_value = annotations_to_json(&annotations);
                     let decoded_json =
                         serde_json::to_string_pretty(&json_value).unwrap_or_default();
+                    self.dispatch(Command::BinaryWalked {
+                        annotations,
+                        decoded_json,
+                    });
+                }
+                Err(e) => {
+                    self.dispatch(Command::WalkError(e.to_string()));
+                }
+            },
+
+            Effect::CompileProtoSchema { source } => match protoc_rs_analyzer::analyze(&source) {
+                Ok(fds) => {
+                    let mut msg_names = Vec::new();
+                    for file in &fds.file {
+                        let pkg = file.package.as_deref().unwrap_or("");
+                        for msg in &file.message_type {
+                            if let Some(ref name) = msg.name {
+                                if pkg.is_empty() {
+                                    msg_names.push(format!(".{name}"));
+                                } else {
+                                    msg_names.push(format!(".{pkg}.{name}"));
+                                }
+                            }
+                        }
+                    }
+                    let schema_json =
+                        format!("{} messages in {} files", msg_names.len(), fds.file.len());
+                    self.dispatch(Command::ProtoSchemaCompiled {
+                        schema: Box::new(fds),
+                        schema_json,
+                        root_message_names: msg_names,
+                    });
+                }
+                Err(e) => {
+                    self.dispatch(Command::SchemaCompileError(e.to_string()));
+                }
+            },
+
+            Effect::WalkProtobuf {
+                binary,
+                schema,
+                root_message,
+            } => match walk_protobuf(&binary, &schema, &root_message) {
+                Ok(annotations) => {
+                    let decoded_json = String::new(); // No JSON decode for protobuf yet
                     self.dispatch(Command::BinaryWalked {
                         annotations,
                         decoded_json,

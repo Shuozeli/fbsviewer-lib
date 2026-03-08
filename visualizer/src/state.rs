@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use flatbuf_visualizer_core::{AnnotatedRegion, Schema};
+use flatbuf_visualizer_core::{AnnotatedRegion, ProtoSchema, Schema};
 
 use crate::permalink;
 use crate::templates;
@@ -57,6 +57,13 @@ pub enum DataFormat {
     Binary,
 }
 
+/// Schema language being used. Auto-detected from schema text content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaFormat {
+    FlatBuffers,
+    Protobuf,
+}
+
 // ---------------------------------------------------------------------------
 // Command -- every possible input to the state machine
 // ---------------------------------------------------------------------------
@@ -97,6 +104,11 @@ pub enum Command {
         schema_json: String,
         root_type_name: Option<String>,
     },
+    ProtoSchemaCompiled {
+        schema: Box<ProtoSchema>,
+        schema_json: String,
+        root_message_names: Vec<String>,
+    },
     SchemaCompileError(String),
     JsonEncoded(Vec<u8>),
     EncodeError(String),
@@ -133,6 +145,13 @@ impl std::fmt::Display for Command {
             Command::SchemaCompiled { root_type_name, .. } => {
                 write!(f, "SchemaCompiled(root={root_type_name:?})")
             }
+            Command::ProtoSchemaCompiled {
+                root_message_names, ..
+            } => write!(
+                f,
+                "ProtoSchemaCompiled({} messages)",
+                root_message_names.len()
+            ),
             Command::SchemaCompileError(e) => write!(f, "SchemaCompileError({e})"),
             Command::JsonEncoded(d) => write!(f, "JsonEncoded({} bytes)", d.len()),
             Command::EncodeError(e) => write!(f, "EncodeError({e})"),
@@ -155,8 +174,10 @@ impl std::fmt::Display for Command {
 /// these and feeds results back as [`Command`] variants.
 #[derive(Debug)]
 pub enum Effect {
-    /// Compile schema text. Result: `SchemaCompiled` or `SchemaCompileError`.
+    /// Compile FlatBuffers schema text. Result: `SchemaCompiled` or `SchemaCompileError`.
     CompileSchema { source: String },
+    /// Compile protobuf schema text. Result: `ProtoSchemaCompiled` or `SchemaCompileError`.
+    CompileProtoSchema { source: String },
     /// Encode JSON data to FlatBuffers binary. Result: `JsonEncoded` or `EncodeError`.
     EncodeJson {
         json_text: String,
@@ -165,11 +186,17 @@ pub enum Effect {
     },
     /// Parse hex text to binary bytes. Result: `SetBinaryData` or `EncodeError`.
     ParseHexData { hex_text: String },
-    /// Walk binary data to produce annotations. Result: `BinaryWalked` or `WalkError`.
+    /// Walk FlatBuffers binary data to produce annotations. Result: `BinaryWalked` or `WalkError`.
     WalkBinary {
         binary: Vec<u8>,
         schema: Schema,
         root_type_name: String,
+    },
+    /// Walk protobuf binary data to produce annotations. Result: `BinaryWalked` or `WalkError`.
+    WalkProtobuf {
+        binary: Vec<u8>,
+        schema: ProtoSchema,
+        root_message: String,
     },
     /// Generate a random schema and matching JSON data. Result: `RandomGenerated` or `RandomGenerateError`.
     GenerateRandomSchemaAndData { seed: u64 },
@@ -183,9 +210,11 @@ impl std::fmt::Display for Effect {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Effect::CompileSchema { .. } => write!(f, "CompileSchema"),
+            Effect::CompileProtoSchema { .. } => write!(f, "CompileProtoSchema"),
             Effect::EncodeJson { .. } => write!(f, "EncodeJson"),
             Effect::ParseHexData { .. } => write!(f, "ParseHexData"),
             Effect::WalkBinary { .. } => write!(f, "WalkBinary"),
+            Effect::WalkProtobuf { .. } => write!(f, "WalkProtobuf"),
             Effect::GenerateRandomSchemaAndData { seed } => {
                 write!(f, "GenerateRandomSchemaAndData(seed={seed})")
             }
@@ -224,8 +253,12 @@ pub struct AppState {
     pub data_format: DataFormat,
     pub root_type_name: String,
 
+    // -- Schema format --
+    pub schema_format: SchemaFormat,
+
     // -- Derived / computed state --
     pub compiled_schema: Option<Schema>,
+    pub proto_schema: Option<ProtoSchema>,
     pub compile_error: Option<String>,
     pub binary_data: Option<Vec<u8>>,
     pub encode_error: Option<String>,
@@ -271,7 +304,9 @@ impl Default for AppState {
             data_text: DEMO_DATA.to_string(),
             data_format: DataFormat::Json,
             root_type_name: String::new(),
+            schema_format: SchemaFormat::FlatBuffers,
             compiled_schema: None,
+            proto_schema: None,
             compile_error: None,
             binary_data: None,
             encode_error: None,
@@ -312,6 +347,7 @@ impl AppState {
                     self.root_type_name.clear();
                     self.locked_region = None;
                     self.selected_template_idx = idx;
+                    self.schema_format = SchemaFormat::FlatBuffers; // templates are always FBS
                     effects.push(Effect::CompileSchema {
                         source: self.schema_text.clone(),
                     });
@@ -319,9 +355,19 @@ impl AppState {
             }
 
             Command::CompileAndEncode => {
-                effects.push(Effect::CompileSchema {
-                    source: self.schema_text.clone(),
-                });
+                self.schema_format = detect_schema_format(&self.schema_text);
+                match self.schema_format {
+                    SchemaFormat::FlatBuffers => {
+                        effects.push(Effect::CompileSchema {
+                            source: self.schema_text.clone(),
+                        });
+                    }
+                    SchemaFormat::Protobuf => {
+                        effects.push(Effect::CompileProtoSchema {
+                            source: self.schema_text.clone(),
+                        });
+                    }
+                }
             }
 
             Command::SwitchDataFormat(new_format) => {
@@ -349,9 +395,19 @@ impl AppState {
                     _ => {}
                 }
                 // Re-compile and re-encode with new format
-                effects.push(Effect::CompileSchema {
-                    source: self.schema_text.clone(),
-                });
+                self.schema_format = detect_schema_format(&self.schema_text);
+                match self.schema_format {
+                    SchemaFormat::FlatBuffers => {
+                        effects.push(Effect::CompileSchema {
+                            source: self.schema_text.clone(),
+                        });
+                    }
+                    SchemaFormat::Protobuf => {
+                        effects.push(Effect::CompileProtoSchema {
+                            source: self.schema_text.clone(),
+                        });
+                    }
+                }
             }
 
             Command::EditSchema(text) => {
@@ -374,13 +430,27 @@ impl AppState {
                 self.binary_data = Some(data.clone());
                 self.encode_error = None;
                 // Auto-walk if schema is available
-                if let Some(ref schema) = self.compiled_schema {
-                    let root_name = self.effective_root_type_name(schema);
-                    effects.push(Effect::WalkBinary {
-                        binary: data,
-                        schema: schema.clone(),
-                        root_type_name: root_name,
-                    });
+                match self.schema_format {
+                    SchemaFormat::FlatBuffers => {
+                        if let Some(ref schema) = self.compiled_schema {
+                            let root_name = self.effective_root_type_name(schema);
+                            effects.push(Effect::WalkBinary {
+                                binary: data,
+                                schema: schema.clone(),
+                                root_type_name: root_name,
+                            });
+                        }
+                    }
+                    SchemaFormat::Protobuf => {
+                        if let Some(ref schema) = self.proto_schema {
+                            let root_msg = self.root_type_name.clone();
+                            effects.push(Effect::WalkProtobuf {
+                                binary: data,
+                                schema: schema.clone(),
+                                root_message: root_msg,
+                            });
+                        }
+                    }
                 }
             }
 
@@ -485,8 +555,46 @@ impl AppState {
                 }
             }
 
+            Command::ProtoSchemaCompiled {
+                schema,
+                schema_json,
+                root_message_names,
+            } => {
+                if self.root_type_name.is_empty() {
+                    if let Some(first) = root_message_names.first() {
+                        self.root_type_name = first.clone();
+                    }
+                }
+                self.schema_json_output = schema_json;
+                let schema = *schema;
+                self.proto_schema = Some(schema.clone());
+                self.compiled_schema = None; // Clear FlatBuffers schema
+                self.compile_error = None;
+                self.status_message = format!(
+                    "Proto schema compiled ({} messages).",
+                    root_message_names.len()
+                );
+
+                // Protobuf only supports binary input (hex mode)
+                match self.data_format {
+                    DataFormat::Binary => {
+                        effects.push(Effect::ParseHexData {
+                            hex_text: self.data_text.clone(),
+                        });
+                    }
+                    DataFormat::Json => {
+                        // For protobuf, JSON encode is not supported yet.
+                        // Switch to expecting hex binary input.
+                        self.status_message =
+                            "Proto schema compiled. Paste hex binary data and switch to Binary mode."
+                                .to_string();
+                    }
+                }
+            }
+
             Command::SchemaCompileError(err) => {
                 self.compiled_schema = None;
+                self.proto_schema = None;
                 self.schema_json_output.clear();
                 self.compile_error = Some(err.clone());
                 self.status_message = format!("Compile error: {err}");
@@ -653,6 +761,36 @@ pub fn bytes_to_hex(data: &[u8]) -> String {
         .join(" ")
 }
 
+/// Auto-detect whether schema text is FlatBuffers (.fbs) or Protobuf (.proto).
+///
+/// Heuristic: if the text contains `syntax = "proto` or starts with `syntax = "proto`,
+/// or contains protobuf keywords like `message ... {` with `int32`/`string` field types
+/// without FlatBuffers keywords like `table`, `root_type`, `namespace`, it's protobuf.
+pub fn detect_schema_format(text: &str) -> SchemaFormat {
+    let trimmed = text.trim();
+
+    // Strong protobuf signals
+    if trimmed.contains("syntax = \"proto")
+        || trimmed.contains("syntax = 'proto")
+        || trimmed.starts_with("edition =")
+    {
+        return SchemaFormat::Protobuf;
+    }
+
+    // Strong FlatBuffers signals
+    if trimmed.contains("root_type ")
+        || trimmed.contains("table ")
+        || trimmed.contains("namespace ")
+        || trimmed.contains("attribute ")
+        || trimmed.contains("file_identifier ")
+    {
+        return SchemaFormat::FlatBuffers;
+    }
+
+    // Default to FlatBuffers
+    SchemaFormat::FlatBuffers
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -660,7 +798,9 @@ pub fn bytes_to_hex(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flatbuf_visualizer_core::{annotations_to_json, encode_json, parse_hex_bytes, walk_binary};
+    use flatbuf_visualizer_core::{
+        annotations_to_json, encode_json, parse_hex_bytes, walk_binary, walk_protobuf,
+    };
 
     /// Execute a command and recursively resolve all effects using real
     /// compiler/encoder/walker implementations.
@@ -792,6 +932,45 @@ mod tests {
                     Err(e) => Some(Command::RandomGenerateError(e.to_string())),
                 }
             }
+            Effect::CompileProtoSchema { source } => match protoc_rs_analyzer::analyze(&source) {
+                Ok(fds) => {
+                    let mut msg_names = Vec::new();
+                    for file in &fds.file {
+                        let pkg = file.package.as_deref().unwrap_or("");
+                        for msg in &file.message_type {
+                            if let Some(ref name) = msg.name {
+                                if pkg.is_empty() {
+                                    msg_names.push(format!(".{name}"));
+                                } else {
+                                    msg_names.push(format!(".{pkg}.{name}"));
+                                }
+                            }
+                        }
+                    }
+                    let schema_json =
+                        serde_json::to_string_pretty(&"<protobuf schema>").unwrap_or_default();
+                    Some(Command::ProtoSchemaCompiled {
+                        schema: Box::new(fds),
+                        schema_json,
+                        root_message_names: msg_names,
+                    })
+                }
+                Err(e) => Some(Command::SchemaCompileError(e.to_string())),
+            },
+            Effect::WalkProtobuf {
+                binary,
+                schema,
+                root_message,
+            } => match walk_protobuf(&binary, &schema, &root_message) {
+                Ok(annotations) => {
+                    let decoded_json = String::new(); // No JSON decode for protobuf yet
+                    Some(Command::BinaryWalked {
+                        annotations,
+                        decoded_json,
+                    })
+                }
+                Err(e) => Some(Command::WalkError(e.to_string())),
+            },
             // Platform effects are no-ops in tests
             Effect::CopyToClipboard { .. } | Effect::SetUrlQueryParam { .. } => None,
         }
@@ -1181,5 +1360,97 @@ mod tests {
         let mut state = AppState::default();
         state.dispatch(Command::LoadFromPermalink("not-valid-data".to_string()));
         assert!(state.status_message.contains("Failed"));
+    }
+
+    // -- Protobuf integration tests --
+
+    #[test]
+    fn test_detect_schema_format_proto() {
+        assert_eq!(
+            detect_schema_format("syntax = \"proto3\";\nmessage Foo { int32 x = 1; }"),
+            SchemaFormat::Protobuf
+        );
+        assert_eq!(
+            detect_schema_format("syntax = 'proto2';\nmessage Bar {}"),
+            SchemaFormat::Protobuf
+        );
+        assert_eq!(
+            detect_schema_format("edition = \"2023\";\nmessage Baz {}"),
+            SchemaFormat::Protobuf
+        );
+    }
+
+    #[test]
+    fn test_detect_schema_format_fbs() {
+        assert_eq!(
+            detect_schema_format("table Monster { hp:int; } root_type Monster;"),
+            SchemaFormat::FlatBuffers
+        );
+        assert_eq!(
+            detect_schema_format("namespace MyGame;\ntable T {}"),
+            SchemaFormat::FlatBuffers
+        );
+    }
+
+    #[test]
+    fn test_proto_compile_and_walk() {
+        let proto = r#"
+            syntax = "proto3";
+            package test;
+            message Person {
+                string name = 1;
+                int32 id = 2;
+            }
+        "#;
+
+        let mut state = AppState::default();
+        state.schema_text = proto.to_string();
+        state.data_format = DataFormat::Binary;
+        // Person { name: "Bob", id: 7 }
+        state.data_text = "0a 03 42 6f 62 10 07".to_string();
+
+        run_with_effects(&mut state, Command::CompileAndEncode);
+
+        assert_eq!(state.schema_format, SchemaFormat::Protobuf);
+        assert!(
+            state.proto_schema.is_some(),
+            "proto schema should be compiled"
+        );
+        assert!(
+            state.compile_error.is_none(),
+            "no compile error: {:?}",
+            state.compile_error
+        );
+        assert!(
+            state.annotations.is_some(),
+            "should have annotations after walk: status={}",
+            state.status_message
+        );
+
+        let annotations = state.annotations.as_ref().unwrap();
+        assert!(!annotations.is_empty());
+        // Root should be a ProtoMessage
+        assert_eq!(
+            annotations[0].region_type,
+            flatbuf_visualizer_core::RegionType::ProtoMessage {
+                type_name: ".test.Person".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_proto_auto_root_type() {
+        let proto = r#"
+            syntax = "proto3";
+            package example;
+            message Greeting { string text = 1; }
+        "#;
+        let mut state = AppState::default();
+        state.schema_text = proto.to_string();
+        run_with_effects(&mut state, Command::CompileAndEncode);
+
+        assert_eq!(state.schema_format, SchemaFormat::Protobuf);
+        // Root type should be auto-set to first message
+        assert_eq!(state.root_type_name, ".example.Greeting");
     }
 }
