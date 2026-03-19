@@ -1,8 +1,8 @@
 # fbsviewer-lib
 
-> Interactive FlatBuffers binary encoding visualizer. See what every byte means
-> in a FlatBuffer -- vtables, scalars, strings, vectors, structs, padding --
-> color-coded and cross-linked between hex view and structure tree.
+> Interactive FlatBuffers and Protocol Buffers binary encoding visualizer. See
+> what every byte means -- vtables, scalars, strings, vectors, structs, padding,
+> tags, varints -- color-coded and cross-linked between hex view and structure tree.
 
 Live demo: https://fbsviewer.shuozeli.com/
 Source: https://github.com/Shuozeli/fbsviewer-lib
@@ -28,13 +28,13 @@ Three Rust crates in a Cargo workspace:
 
 ### visualizer-core (portable library, no GUI)
 
-Binary walker, JSON encoder/decoder, hex parser, schema loader. This is the core
-engine that parses FlatBuffers binaries into annotated byte regions.
+JSON encoder/decoder, hex parser, schema loader, and protobuf bridge. Re-exports
+binary walker and region types from `flatc-rs-annotator`.
 
-- `binary_walker.rs` -- Walk a FlatBuffer binary using a schema, producing annotated regions
+- `lib.rs` -- Re-exports walk_binary, AnnotatedRegion, RegionType from flatc-rs-annotator; re-exports ProtoSchema from protoc-rs-schema
 - `json_encoder.rs` -- JSON -> FlatBuffers binary encoding (pure Rust)
 - `json_decoder.rs` -- Annotated regions -> JSON decoding
-- `region.rs` -- Byte region types (VTable, Table, Scalar, String, Vector, Struct, Padding, etc.)
+- `proto_walker.rs` -- Bridge: protobuf-rs annotator -> shared AnnotatedRegion type for protobuf binary visualization
 - `hex_parse.rs` -- Hex string -> bytes parser
 - `schema_loader.rs` -- JSON string -> Schema loader
 
@@ -43,30 +43,38 @@ engine that parses FlatBuffers binaries into annotated byte regions.
 Interactive GUI built with egui. Compiles to native desktop (eframe) and
 WebAssembly (trunk + wasm-bindgen). Uses MVU (Model-View-Update) architecture.
 
-- `state.rs` -- Pure AppState, Command enum, Effect enum, dispatch() function
-- `view.rs` -- render_view() extracts egui rendering, emits Commands
-- `app.rs` -- Thin egui shell: dispatch loop, effect execution
+- `state.rs` -- Pure AppState, Command enum, Effect enum, dispatch() function; auto-detects FlatBuffers vs Protobuf schemas
+- `view.rs` -- render_view() extracts egui rendering, emits Commands; responsive layout (narrow/wide)
+- `app.rs` -- Thin egui shell: dispatch loop, effect execution; CJK font loading
 - `hex_view.rs` -- Color-coded hex byte display with hover/click highlighting
 - `structure_view.rs` -- Collapsible tree view of binary structure
 - `templates.rs` -- 12 built-in example schemas (Monster, unions, vectors, etc.)
+- `syntax.rs` -- FBS and JSON syntax highlighting for editor widgets
+- `permalink.rs` -- Encode/decode state as URL-safe permalink (deflate + base64url)
 
 ### visualizer-cli (CLI binary inspection tool)
 
-Command-line tool for inspecting FlatBuffers binaries without a GUI.
+Command-line tool for inspecting FlatBuffers and Protobuf binaries without a GUI.
 
 - Binary: `flatbuf-viz`
-- Input: `.fbs` schema file + binary/JSON/hex data file
+- Input: `.fbs`, `.json`, or `.proto` schema file + binary/hex data file
 - Output: structured text showing byte regions, field values, and offsets
+- Filters: `--byte-range`, `--field`, `--region-type`
+- Output formats: `--format table` (default), `json`, `compact`
 
 ## Dependencies
 
 Depends on [flatbuffers-rs](https://github.com/Shuozeli/flatbuffers-rs) for:
+- `flatc-rs-annotator` -- Binary walker and region type definitions
 - `flatc-rs-compiler` -- Schema compilation (.fbs -> parsed Schema)
 - `flatc-rs-schema` -- Schema type definitions
 - `flatc-rs-fbs-gen` -- Random schema generation (for template examples)
 - `flatc-rs-data-gen` -- Random data generation (for template examples)
 
-Uses `flatbuffers = "25.12.19"` from crates.io for the official Rust runtime.
+Depends on [protobuf-rs](https://github.com/Shuozeli/protobuf-rs) for:
+- `protoc-rs-annotator` -- Protobuf binary annotation
+- `protoc-rs-schema` -- Protobuf schema types (FileDescriptorSet)
+- `protoc-rs-analyzer` -- Proto source compilation (.proto -> FileDescriptorSet)
 
 ## Build
 
@@ -74,7 +82,7 @@ Uses `flatbuffers = "25.12.19"` from crates.io for the official Rust runtime.
 # Native desktop app
 cargo run -p flatbuf-visualizer
 
-# Run tests (130 tests)
+# Run tests (148 tests)
 cargo test --workspace
 
 # WASM web app
@@ -83,15 +91,20 @@ cd visualizer && trunk build --release --public-url ./
 
 ## Key Features
 
-- Paste `.fbs` schema + JSON or hex data
+- Paste `.fbs` schema + JSON or hex data (FlatBuffers), or `.proto` schema + hex binary (Protobuf)
+- Auto-detection of schema format (FlatBuffers vs Protobuf)
 - Pure Rust JSON-to-FlatBuffers encoder (works on native and WASM)
 - Hex view with per-byte coloring by region type
 - Structure tree with collapsible hierarchy
 - Bidirectional hover highlighting with click-to-lock
 - Data format dropdown (JSON / Hex) with auto-conversion
 - 12 built-in template examples
+- Random schema and data generation
+- Shareable permalinks (deflate + base64url encoded in URL)
+- FBS and JSON syntax highlighting in editors
 - Decoded JSON view
 - File upload support (native: file dialogs, WASM: browser upload)
+- Responsive layout (narrow: stacked, wide: side-by-side)
 
 ## Optional: Detailed Documentation
 

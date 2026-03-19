@@ -5,3 +5,7 @@ members = [
     "visualizer-cli",
     "visualizer",
 ]
+
+# Override git deps with local paths for development.
+# In the public repo (Shuozeli/fbsviewer-lib), this section is absent and
+# the crates fetch flatbuffers-rs from GitHub.

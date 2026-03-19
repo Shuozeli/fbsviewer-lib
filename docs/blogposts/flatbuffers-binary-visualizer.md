@@ -44,7 +44,7 @@ This means bugs are likely. AI-generated code handles the common cases well but 
 
 What I have tested:
 
-- **130 tests** covering the encoder, binary walker, CLI, and UI state machine
+- **148 tests** covering the encoder, binary walker, CLI, and UI state machine
 - **Roundtrip encoding/decoding** for all 12 built-in templates (scalars, strings, nested tables, unions, vectors of tables/structs/strings, enums, file identifiers, default values, `force_align` structs)
 - **Byte-level verification** against binaries produced by the official C++ `flatc` compiler
 - **Full byte coverage checks** confirming every byte in the output is accounted for (no unexplained gaps)
@@ -58,6 +58,8 @@ Current constraints:
 - **The WASM binary is 3.8 MB.** That's the cost of shipping a full schema compiler + encoder + binary walker in the browser. Not yet optimized for size.
 - **No FlexBuffers support.** Only classic FlatBuffers.
 - **No binary-to-JSON without a schema.** FlatBuffers are not self-describing. You need the `.fbs` schema to interpret the bytes.
+
+**Update (since initial publication):** The tool now also supports Protocol Buffers binary visualization. Paste a `.proto` schema, provide hex-encoded protobuf binary data, and the tool will annotate tags, varints, length-delimited fields, and fixed-width fields. Schema format is auto-detected.
 
 ## Try It
 
