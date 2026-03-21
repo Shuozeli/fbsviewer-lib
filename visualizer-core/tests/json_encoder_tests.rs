@@ -173,9 +173,9 @@ fn roundtrip_from_fbs(fbs_source: &str, input: &Value) -> Value {
     let result = flatc_rs_compiler::compile_single(fbs_source).unwrap();
     let root_name = result
         .schema
-        .root_table
-        .as_ref()
-        .and_then(|t| t.name.as_deref())
+        .root_table_index
+        .and_then(|idx| result.schema.objects.get(idx))
+        .map(|obj| obj.name.as_str())
         .unwrap();
     let binary = encode_json(input, &result.schema, root_name).unwrap();
     let annotations = walk_binary(&binary, &result.schema, root_name).unwrap();
@@ -190,9 +190,9 @@ fn encode_and_walk_from_fbs(
     let result = flatc_rs_compiler::compile_single(fbs_source).unwrap();
     let root_name = result
         .schema
-        .root_table
-        .as_ref()
-        .and_then(|t| t.name.as_deref())
+        .root_table_index
+        .and_then(|idx| result.schema.objects.get(idx))
+        .map(|obj| obj.name.as_str())
         .unwrap();
     let binary = encode_json(input, &result.schema, root_name).unwrap();
     let annotations = walk_binary(&binary, &result.schema, root_name).unwrap();
@@ -984,9 +984,9 @@ fn test_roundtrip_default_values_only_defaults() {
     let result = flatc_rs_compiler::compile_single(DEFAULT_VALUES_SCHEMA).unwrap();
     let root_name = result
         .schema
-        .root_table
-        .as_ref()
-        .and_then(|t| t.name.as_deref())
+        .root_table_index
+        .and_then(|idx| result.schema.objects.get(idx))
+        .map(|obj| obj.name.as_str())
         .unwrap();
     let binary = encode_json(&input, &result.schema, root_name).unwrap();
     let annotations = walk_binary(&binary, &result.schema, root_name).unwrap();
@@ -1228,9 +1228,9 @@ fn test_generate_all_template_hex() {
         let result = flatc_rs_compiler::compile_single(schema).unwrap();
         let root_name = result
             .schema
-            .root_table
-            .as_ref()
-            .and_then(|t| t.name.as_deref())
+            .root_table_index
+            .and_then(|idx| result.schema.objects.get(idx))
+            .map(|obj| obj.name.as_str())
             .unwrap();
         let binary = encode_json(input, &result.schema, root_name).unwrap();
         let hex: Vec<String> = binary.iter().map(|b| format!("{b:02x}")).collect();

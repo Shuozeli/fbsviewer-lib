@@ -10,9 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 flatbuf-visualizer-core = { path = "../visualizer-core" }
-flatc-rs-compiler = { git = "https://github.com/Shuozeli/flatbuffers-rs.git" }
-flatc-rs-fbs-gen = { git = "https://github.com/Shuozeli/flatbuffers-rs.git" }
-flatc-rs-data-gen = { git = "https://github.com/Shuozeli/flatbuffers-rs.git" }
+flatc-rs-compiler = { git = "https://github.com/Shuozeli/flatbuffers-rs.git", branch = "main" }
+flatc-rs-fbs-gen = { git = "https://github.com/Shuozeli/flatbuffers-rs.git", branch = "main" }
+flatc-rs-data-gen = { git = "https://github.com/Shuozeli/flatbuffers-rs.git", branch = "main" }
 protoc-rs-analyzer = { git = "https://github.com/Shuozeli/protobuf-rs.git" }
 egui = "0.31"
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }

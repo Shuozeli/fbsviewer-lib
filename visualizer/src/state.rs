@@ -7,45 +7,10 @@
 
 use std::collections::VecDeque;
 
-use flatbuf_visualizer_core::{AnnotatedRegion, ProtoSchema, Schema};
+use flatbuf_visualizer_core::{AnnotatedRegion, ProtoSchema, ResolvedSchema};
 
 use crate::permalink;
 use crate::templates;
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-pub const DEMO_SCHEMA: &str = r#"namespace MyGame;
-
-enum Color : byte { Red = 1, Green, Blue }
-
-struct Vec3 {
-  x: float;
-  y: float;
-  z: float;
-}
-
-table Monster {
-  pos: Vec3;
-  mana: short = 150;
-  hp: short = 100;
-  name: string;
-  color: Color = Blue;
-  inventory: [ubyte];
-}
-
-root_type Monster;
-"#;
-
-pub const DEMO_DATA: &str = r#"{
-  "pos": { "x": 1.0, "y": 2.0, "z": 3.0 },
-  "mana": 200,
-  "hp": 300,
-  "name": "Orc",
-  "color": "Red",
-  "inventory": [0, 1, 2, 3, 4]
-}"#;
 
 // ---------------------------------------------------------------------------
 // DataFormat
@@ -70,15 +35,11 @@ pub enum SchemaFormat {
 
 /// Every user action or effect result that can modify application state.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Some variants are only used in tests
 pub enum Command {
     // -- User interactions --
     SelectTemplate(usize),
     CompileAndEncode,
     SwitchDataFormat(DataFormat),
-    EditSchema(String),
-    EditData(String),
-    EditRootType(String),
     ToggleSchemaJson,
     ToggleDecodedJson,
     HoverRegion(Option<usize>),
@@ -100,7 +61,7 @@ pub enum Command {
 
     // -- Side effect results (fed back by the runtime) --
     SchemaCompiled {
-        schema: Box<Schema>,
+        schema: Box<ResolvedSchema>,
         schema_json: String,
         root_type_name: Option<String>,
     },
@@ -130,9 +91,6 @@ impl std::fmt::Display for Command {
             Command::SelectTemplate(idx) => write!(f, "SelectTemplate({idx})"),
             Command::CompileAndEncode => write!(f, "CompileAndEncode"),
             Command::SwitchDataFormat(fmt) => write!(f, "SwitchDataFormat({fmt:?})"),
-            Command::EditSchema(_) => write!(f, "EditSchema(...)"),
-            Command::EditData(_) => write!(f, "EditData(...)"),
-            Command::EditRootType(name) => write!(f, "EditRootType({name:?})"),
             Command::ToggleSchemaJson => write!(f, "ToggleSchemaJson"),
             Command::ToggleDecodedJson => write!(f, "ToggleDecodedJson"),
             Command::HoverRegion(r) => write!(f, "HoverRegion({r:?})"),
@@ -181,7 +139,7 @@ pub enum Effect {
     /// Encode JSON data to FlatBuffers binary. Result: `JsonEncoded` or `EncodeError`.
     EncodeJson {
         json_text: String,
-        schema: Schema,
+        schema: ResolvedSchema,
         root_type_name: String,
     },
     /// Parse hex text to binary bytes. Result: `SetBinaryData` or `EncodeError`.
@@ -189,7 +147,7 @@ pub enum Effect {
     /// Walk FlatBuffers binary data to produce annotations. Result: `BinaryWalked` or `WalkError`.
     WalkBinary {
         binary: Vec<u8>,
-        schema: Schema,
+        schema: ResolvedSchema,
         root_type_name: String,
     },
     /// Walk protobuf binary data to produce annotations. Result: `BinaryWalked` or `WalkError`.
@@ -257,7 +215,7 @@ pub struct AppState {
     pub schema_format: SchemaFormat,
 
     // -- Derived / computed state --
-    pub compiled_schema: Option<Schema>,
+    pub compiled_schema: Option<ResolvedSchema>,
     pub proto_schema: Option<ProtoSchema>,
     pub compile_error: Option<String>,
     pub binary_data: Option<Vec<u8>>,
@@ -300,8 +258,8 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            schema_text: DEMO_SCHEMA.to_string(),
-            data_text: DEMO_DATA.to_string(),
+            schema_text: templates::all()[0].schema.to_string(),
+            data_text: templates::all()[0].json_data.to_string(),
             data_format: DataFormat::Json,
             root_type_name: String::new(),
             schema_format: SchemaFormat::FlatBuffers,
@@ -408,16 +366,6 @@ impl AppState {
                         });
                     }
                 }
-            }
-
-            Command::EditSchema(text) => {
-                self.schema_text = text;
-            }
-            Command::EditData(text) => {
-                self.data_text = text;
-            }
-            Command::EditRootType(text) => {
-                self.root_type_name = text;
             }
 
             Command::LoadSchemaText(text) => {
@@ -685,14 +633,14 @@ impl AppState {
     }
 
     /// Derive root type name from state, falling back to schema's root_table.
-    fn effective_root_type_name(&self, schema: &Schema) -> String {
+    fn effective_root_type_name(&self, schema: &ResolvedSchema) -> String {
         if !self.root_type_name.is_empty() {
             self.root_type_name.clone()
         } else {
             schema
-                .root_table
-                .as_ref()
-                .and_then(|t| t.name.as_deref())
+                .root_table_index
+                .and_then(|idx| schema.objects.get(idx))
+                .map(|obj| obj.name.as_str())
                 .unwrap_or("")
                 .to_string()
         }
@@ -799,7 +747,8 @@ pub fn detect_schema_format(text: &str) -> SchemaFormat {
 mod tests {
     use super::*;
     use flatbuf_visualizer_core::{
-        annotations_to_json, encode_json, parse_hex_bytes, walk_binary, walk_protobuf,
+        annotations_to_json, collect_proto_message_names, encode_json, parse_hex_bytes,
+        walk_binary, walk_protobuf,
     };
 
     /// Execute a command and recursively resolve all effects using real
@@ -823,11 +772,11 @@ mod tests {
                     Ok(Ok(result)) => {
                         let root_name = result
                             .schema
-                            .root_table
-                            .as_ref()
-                            .and_then(|t| t.name.clone());
-                        let schema_json =
-                            serde_json::to_string_pretty(&result.schema).unwrap_or_default();
+                            .root_table_index
+                            .and_then(|idx| result.schema.objects.get(idx))
+                            .map(|obj| obj.name.clone());
+                        let legacy = result.schema.as_legacy();
+                        let schema_json = serde_json::to_string_pretty(&legacy).unwrap_or_default();
                         Some(Command::SchemaCompiled {
                             schema: Box::new(result.schema),
                             schema_json,
@@ -912,19 +861,15 @@ mod tests {
 
                 let root_type = compile_result
                     .schema
-                    .root_table
-                    .as_ref()
-                    .and_then(|t| t.name.as_deref())
+                    .root_table_index
+                    .and_then(|idx| compile_result.schema.objects.get(idx))
+                    .map(|obj| obj.name.as_str())
                     .unwrap_or("")
                     .to_string();
 
+                let legacy = compile_result.schema.as_legacy();
                 let data_config = flatc_rs_data_gen::DataGenConfig::default();
-                match flatc_rs_data_gen::generate_json(
-                    &compile_result.schema,
-                    &root_type,
-                    seed,
-                    data_config,
-                ) {
+                match flatc_rs_data_gen::generate_json(&legacy, &root_type, seed, data_config) {
                     Ok(json_text) => Some(Command::RandomGenerated {
                         schema_text: fbs_text,
                         data_text: json_text,
@@ -934,19 +879,7 @@ mod tests {
             }
             Effect::CompileProtoSchema { source } => match protoc_rs_analyzer::analyze(&source) {
                 Ok(fds) => {
-                    let mut msg_names = Vec::new();
-                    for file in &fds.file {
-                        let pkg = file.package.as_deref().unwrap_or("");
-                        for msg in &file.message_type {
-                            if let Some(ref name) = msg.name {
-                                if pkg.is_empty() {
-                                    msg_names.push(format!(".{name}"));
-                                } else {
-                                    msg_names.push(format!(".{pkg}.{name}"));
-                                }
-                            }
-                        }
-                    }
+                    let msg_names = collect_proto_message_names(&fds);
                     let schema_json =
                         serde_json::to_string_pretty(&"<protobuf schema>").unwrap_or_default();
                     Some(Command::ProtoSchemaCompiled {
@@ -1049,7 +982,16 @@ mod tests {
         let mut state = AppState::default();
         state.data_format = DataFormat::Json;
         let effects = state.dispatch(Command::SchemaCompiled {
-            schema: Box::new(Schema::default()),
+            schema: Box::new(ResolvedSchema {
+                objects: vec![],
+                enums: vec![],
+                file_ident: None,
+                file_ext: None,
+                root_table_index: None,
+                services: vec![],
+                advanced_features: Default::default(),
+                fbs_files: vec![],
+            }),
             schema_json: "{}".to_string(),
             root_type_name: Some("Monster".to_string()),
         });
@@ -1067,7 +1009,16 @@ mod tests {
         state.data_format = DataFormat::Binary;
         state.data_text = "0a 0b 0c".to_string();
         let effects = state.dispatch(Command::SchemaCompiled {
-            schema: Box::new(Schema::default()),
+            schema: Box::new(ResolvedSchema {
+                objects: vec![],
+                enums: vec![],
+                file_ident: None,
+                file_ext: None,
+                root_table_index: None,
+                services: vec![],
+                advanced_features: Default::default(),
+                fbs_files: vec![],
+            }),
             schema_json: "{}".to_string(),
             root_type_name: Some("Test".to_string()),
         });
@@ -1079,7 +1030,16 @@ mod tests {
     #[test]
     fn test_schema_compile_error_clears_schema() {
         let mut state = AppState::default();
-        state.compiled_schema = Some(Schema::default());
+        state.compiled_schema = Some(ResolvedSchema {
+            objects: vec![],
+            enums: vec![],
+            file_ident: None,
+            file_ext: None,
+            root_table_index: None,
+            services: vec![],
+            advanced_features: Default::default(),
+            fbs_files: vec![],
+        });
         state.dispatch(Command::SchemaCompileError("syntax error".to_string()));
         assert!(state.compiled_schema.is_none());
         assert_eq!(state.compile_error.as_deref(), Some("syntax error"));

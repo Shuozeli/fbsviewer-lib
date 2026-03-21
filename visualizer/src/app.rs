@@ -7,7 +7,8 @@
 //! - Platform-specific code (file dialogs, WASM uploads, CJK font loading)
 
 use flatbuf_visualizer_core::{
-    annotations_to_json, encode_json, parse_hex_bytes, walk_binary, walk_protobuf,
+    annotations_to_json, collect_proto_message_names, encode_json, parse_hex_bytes, walk_binary,
+    walk_protobuf,
 };
 
 use crate::state::{AppState, Command, Effect};
@@ -123,11 +124,11 @@ impl VisualizerApp {
                     Ok(Ok(result)) => {
                         let root_name = result
                             .schema
-                            .root_table
-                            .as_ref()
-                            .and_then(|t| t.name.clone());
-                        let schema_json =
-                            serde_json::to_string_pretty(&result.schema).unwrap_or_default();
+                            .root_table_index
+                            .and_then(|idx| result.schema.objects.get(idx))
+                            .map(|obj| obj.name.clone());
+                        let legacy = result.schema.as_legacy();
+                        let schema_json = serde_json::to_string_pretty(&legacy).unwrap_or_default();
                         self.dispatch(Command::SchemaCompiled {
                             schema: Box::new(result.schema),
                             schema_json,
@@ -197,19 +198,7 @@ impl VisualizerApp {
 
             Effect::CompileProtoSchema { source } => match protoc_rs_analyzer::analyze(&source) {
                 Ok(fds) => {
-                    let mut msg_names = Vec::new();
-                    for file in &fds.file {
-                        let pkg = file.package.as_deref().unwrap_or("");
-                        for msg in &file.message_type {
-                            if let Some(ref name) = msg.name {
-                                if pkg.is_empty() {
-                                    msg_names.push(format!(".{name}"));
-                                } else {
-                                    msg_names.push(format!(".{pkg}.{name}"));
-                                }
-                            }
-                        }
-                    }
+                    let msg_names = collect_proto_message_names(&fds);
                     let schema_json =
                         format!("{} messages in {} files", msg_names.len(), fds.file.len());
                     self.dispatch(Command::ProtoSchemaCompiled {
@@ -326,19 +315,15 @@ impl VisualizerApp {
 
                 let root_type = compile_result
                     .schema
-                    .root_table
-                    .as_ref()
-                    .and_then(|t| t.name.as_deref())
+                    .root_table_index
+                    .and_then(|idx| compile_result.schema.objects.get(idx))
+                    .map(|obj| obj.name.as_str())
                     .unwrap_or("")
                     .to_string();
 
+                let legacy = compile_result.schema.as_legacy();
                 let data_config = flatc_rs_data_gen::DataGenConfig::default();
-                match flatc_rs_data_gen::generate_json(
-                    &compile_result.schema,
-                    &root_type,
-                    seed,
-                    data_config,
-                ) {
+                match flatc_rs_data_gen::generate_json(&legacy, &root_type, seed, data_config) {
                     Ok(json_text) => {
                         self.dispatch(Command::RandomGenerated {
                             schema_text: fbs_text,

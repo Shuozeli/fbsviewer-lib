@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use flatbuf_visualizer_core::{ProtoSchema, Schema};
+use flatbuf_visualizer_core::{collect_proto_message_names, ProtoSchema, ResolvedSchema};
 
 /// What kind of schema was loaded.
 pub enum LoadedSchema {
     FlatBuffers {
-        schema: Box<Schema>,
+        schema: Box<ResolvedSchema>,
         root_type_name: Option<String>,
     },
     Protobuf {
@@ -42,9 +42,9 @@ fn load_from_fbs(path: &Path, include_paths: &[PathBuf]) -> Result<LoadedSchema,
 
     let root_type_name = result
         .schema
-        .root_table
-        .as_ref()
-        .and_then(|rt| rt.name.clone());
+        .root_table_index
+        .and_then(|idx| result.schema.objects.get(idx))
+        .map(|obj| obj.name.clone());
 
     Ok(LoadedSchema::FlatBuffers {
         schema: Box::new(result.schema),
@@ -67,19 +67,7 @@ fn load_from_proto(path: &Path) -> Result<LoadedSchema, String> {
     let fds = protoc_rs_analyzer::analyze(&source)
         .map_err(|e| format!("proto compilation failed: {e}"))?;
 
-    let mut msg_names = Vec::new();
-    for file in &fds.file {
-        let pkg = file.package.as_deref().unwrap_or("");
-        for msg in &file.message_type {
-            if let Some(ref name) = msg.name {
-                if pkg.is_empty() {
-                    msg_names.push(format!(".{name}"));
-                } else {
-                    msg_names.push(format!(".{pkg}.{name}"));
-                }
-            }
-        }
-    }
+    let msg_names = collect_proto_message_names(&fds);
 
     Ok(LoadedSchema::Protobuf {
         schema: fds,

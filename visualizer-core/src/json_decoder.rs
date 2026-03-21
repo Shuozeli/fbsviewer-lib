@@ -22,14 +22,7 @@ fn region_to_json(annotations: &[AnnotatedRegion], idx: usize) -> Value {
     let region = &annotations[idx];
 
     match &region.region_type {
-        RegionType::TableSOffset { .. } => {
-            let mut obj = Map::new();
-            for &child_idx in &region.children {
-                collect_field(annotations, child_idx, &mut obj);
-            }
-            Value::Object(obj)
-        }
-        RegionType::StructInline { .. } => {
+        RegionType::TableSOffset { .. } | RegionType::StructInline { .. } => {
             let mut obj = Map::new();
             for &child_idx in &region.children {
                 collect_field(annotations, child_idx, &mut obj);

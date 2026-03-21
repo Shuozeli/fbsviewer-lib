@@ -43,8 +43,7 @@ fn read_url_data_param() -> Option<String> {
         if let Some(value) = param.strip_prefix("data=") {
             let decoded = js_sys::decode_uri_component(value)
                 .ok()
-                .map(|s| s.as_string())
-                .flatten();
+                .and_then(|s| s.as_string());
             if let Some(v) = decoded {
                 if !v.is_empty() {
                     return Some(v);

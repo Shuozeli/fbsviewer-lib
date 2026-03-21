@@ -3,10 +3,9 @@
 //! This is the inverse of the binary_walker + json_decoder pipeline:
 //! instead of reading binary and producing JSON, it reads JSON and produces binary.
 
+use flatc_rs_schema::resolved::ResolvedSchema;
 use flatc_rs_schema::{BaseType, Enum, Field, Object, Schema, Type};
 use serde_json::Value;
-
-use flatc_rs_annotator::scalar_byte_size;
 
 const MAX_DEPTH: usize = 64;
 
@@ -78,10 +77,11 @@ pub enum JsonEncodeError {
 /// `root_type` is the name of the root table type.
 pub fn encode_json(
     json: &Value,
-    schema: &Schema,
+    schema: &ResolvedSchema,
     root_type: &str,
 ) -> Result<Vec<u8>, JsonEncodeError> {
-    let mut enc = Encoder::new(schema);
+    let legacy = schema.as_legacy();
+    let mut enc = Encoder::new(&legacy);
     enc.encode(json, root_type)
 }
 
@@ -539,7 +539,7 @@ impl<'a> Encoder<'a> {
                 Ok(v.to_le_bytes().to_vec())
             }
 
-            _ => Ok(vec![0; scalar_byte_size(bt)]),
+            _ => Ok(vec![0; bt.scalar_byte_size()]),
         }
     }
 
@@ -703,8 +703,8 @@ impl<'a> Encoder<'a> {
             .unwrap_or(BaseType::BASE_TYPE_U_BYTE);
 
         match elem_bt {
-            bt if crate::is_scalar(bt) => {
-                let elem_size = scalar_byte_size(bt);
+            bt if bt.is_scalar() => {
+                let elem_size = bt.scalar_byte_size();
                 let alignment = elem_size.max(4);
                 self.align(alignment);
                 let pos = self.buf.len();

@@ -31,9 +31,9 @@ fn main() {
             Ok(r) => {
                 let schema = r.schema;
                 let root_name = schema
-                    .root_table
-                    .as_ref()
-                    .and_then(|t| t.name.as_deref())
+                    .root_table_index
+                    .and_then(|idx| schema.objects.get(idx))
+                    .map(|obj| obj.name.as_str())
                     .unwrap_or("");
                 let bytes = parse_hex_bytes(hex).unwrap();
                 match walk_binary(&bytes, &schema, root_name) {
