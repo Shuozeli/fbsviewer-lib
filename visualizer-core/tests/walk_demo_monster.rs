@@ -62,10 +62,10 @@ fn walk_demo() -> Vec<AnnotatedRegion> {
     walk_binary(&binary, &result.schema, &root_name).unwrap()
 }
 
-fn find_region<'a>(
-    regions: &'a [AnnotatedRegion],
+fn find_region(
+    regions: &[AnnotatedRegion],
     pred: impl Fn(&AnnotatedRegion) -> bool,
-) -> Option<&'a AnnotatedRegion> {
+) -> Option<&AnnotatedRegion> {
     regions.iter().find(|r| pred(r))
 }
 

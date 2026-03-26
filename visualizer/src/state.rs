@@ -746,6 +746,7 @@ pub fn detect_schema_format(text: &str) -> SchemaFormat {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

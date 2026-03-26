@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn decode_too_short() {
-        let short = URL_SAFE_NO_PAD.encode(&[1u8, 0]);
+        let short = URL_SAFE_NO_PAD.encode([1u8, 0]);
         // This will either fail decompression or be too short after inflate
         assert!(decode(&short).is_err());
     }

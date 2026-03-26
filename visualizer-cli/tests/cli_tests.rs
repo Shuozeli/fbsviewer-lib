@@ -1507,7 +1507,7 @@ fn test_byte_range_single_byte() {
     let out = stdout(&output);
     let lines: Vec<&str> = out.lines().collect();
     assert!(
-        lines.len() >= 1,
+        !lines.is_empty(),
         "single byte range should match at least 1 region"
     );
     assert!(out.contains("table_soffset"), "byte 0x14 is table_soffset");
@@ -1606,16 +1606,14 @@ fn test_monster_full_byte_coverage() {
     assert!(output.status.success());
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout(&output)).unwrap();
 
-    let mut covered = vec![false; 69];
+    let mut covered = [false; 69];
     for r in &parsed {
         let start_hex = r["byte_start"].as_str().unwrap();
         let end_hex = r["byte_end"].as_str().unwrap();
         let start = usize::from_str_radix(&start_hex[2..], 16).unwrap();
         let end = usize::from_str_radix(&end_hex[2..], 16).unwrap();
-        for i in start..end {
-            if i < 69 {
-                covered[i] = true;
-            }
+        for slot in covered.iter_mut().take(end.min(69)).skip(start) {
+            *slot = true;
         }
     }
     for (i, &c) in covered.iter().enumerate() {
@@ -1639,14 +1637,12 @@ fn test_simple_table_full_byte_coverage() {
     assert!(output.status.success());
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout(&output)).unwrap();
 
-    let mut covered = vec![false; 18];
+    let mut covered = [false; 18];
     for r in &parsed {
         let start = usize::from_str_radix(&r["byte_start"].as_str().unwrap()[2..], 16).unwrap();
         let end = usize::from_str_radix(&r["byte_end"].as_str().unwrap()[2..], 16).unwrap();
-        for i in start..end {
-            if i < 18 {
-                covered[i] = true;
-            }
+        for slot in covered.iter_mut().take(end.min(18)).skip(start) {
+            *slot = true;
         }
     }
     for (i, &c) in covered.iter().enumerate() {
@@ -1763,7 +1759,7 @@ fn test_padding_regions_identified() {
     ]);
     assert!(output.status.success());
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout(&output)).unwrap();
-    assert!(parsed.len() >= 1, "should have at least 1 padding region");
+    assert!(!parsed.is_empty(), "should have at least 1 padding region");
     for r in &parsed {
         assert_eq!(r["region_type"].as_str().unwrap(), "padding");
     }

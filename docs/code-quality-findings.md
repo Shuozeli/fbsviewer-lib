@@ -132,6 +132,50 @@
 - **Fix:** Define a `CliError` enum using `thiserror` that wraps core errors and `std::io::Error`. Low priority for a CLI tool since errors are just printed.
 - **Status:** Skipped. Low priority for a CLI tool where all errors are printed to stderr and the program exits.
 
+## 8. Clippy Warnings (Round 2)
+
+### approx_constant in test data -- DONE
+- **Location:** `visualizer-core/tests/json_encoder_tests.rs:893,894,926,927,1194`
+- **Problem:** Test data used `3.14` and `2.718281828` as float values, triggering clippy's `approx_constant` deny lint because they approximate `PI` and `E`. These are intentional test data values, not approximations of the constants.
+- **Fix:** Changed test values to `3.125` and `2.71` which do not trigger the lint.
+- **Status:** Fixed. All 5 occurrences updated.
+
+### needless_lifetimes in test helper -- DONE
+- **Location:** `visualizer-core/tests/walk_demo_monster.rs:65`
+- **Problem:** `find_region<'a>` has explicit lifetime annotations that can be elided.
+- **Fix:** Removed explicit lifetime annotations.
+- **Status:** Fixed.
+
+### len_zero in test assertions -- DONE
+- **Location:** `visualizer-cli/tests/cli_tests.rs:1510,1766`
+- **Problem:** `lines.len() >= 1` and `parsed.len() >= 1` should use `!is_empty()`.
+- **Fix:** Changed to `!lines.is_empty()` and `!parsed.is_empty()`.
+- **Status:** Fixed.
+
+### useless_vec in test code -- DONE
+- **Location:** `visualizer-cli/tests/cli_tests.rs:1609,1642`
+- **Problem:** `vec![false; 69]` and `vec![false; 18]` used where fixed-size arrays suffice.
+- **Fix:** Changed to `[false; 69]` and `[false; 18]`.
+- **Status:** Fixed.
+
+### needless_range_loop in test code -- DONE
+- **Location:** `visualizer-cli/tests/cli_tests.rs:1615,1646`
+- **Problem:** Loop variable used only for indexing into `covered` array.
+- **Fix:** Replaced with `covered.iter_mut().take(end.min(N)).skip(start)` iterator pattern.
+- **Status:** Fixed.
+
+### needless_borrows_for_generic_args -- DONE
+- **Location:** `visualizer/src/permalink.rs:165`
+- **Problem:** `URL_SAFE_NO_PAD.encode(&[1u8, 0])` has unnecessary borrow since `encode` accepts `AsRef<[u8]>`.
+- **Fix:** Changed to `URL_SAFE_NO_PAD.encode([1u8, 0])`.
+- **Status:** Fixed.
+
+### field_reassign_with_default in tests -- DONE
+- **Location:** `visualizer/src/state.rs` tests (12 instances)
+- **Problem:** Test setup creates `AppState::default()` then reassigns fields. Clippy suggests struct initialization syntax, but reassignment is more readable for test setup.
+- **Fix:** Suppressed with `#[allow(clippy::field_reassign_with_default)]` on the test module.
+- **Status:** Fixed (suppressed -- appropriate for test setup code).
+
 ## Summary
 
 | Category | Count | Fixed | Skipped | Severity |
@@ -143,4 +187,5 @@
 | Excessive Cloning | 2 | 0 | 2 | Low-Medium |
 | Missing Abstraction | 1 | 0 | 1 | Low |
 | Stringly-Typed Errors | 1 | 0 | 1 | Low |
-| **Total** | **18** | **12** | **6** | |
+| Clippy Warnings (Round 2) | 7 | 7 | 0 | Low-Medium |
+| **Total** | **25** | **19** | **6** | |

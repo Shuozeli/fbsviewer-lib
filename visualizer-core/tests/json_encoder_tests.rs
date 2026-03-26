@@ -890,8 +890,8 @@ fn test_roundtrip_all_scalar_types() {
         "f_uint": 4000000000u64,
         "f_long": -9000000000000i64,
         "f_ulong": 18000000000000000000u64,
-        "f_float": 3.14,
-        "f_double": 2.718281828
+        "f_float": 3.125,
+        "f_double": 2.71
     });
     let output = roundtrip_from_fbs(ALL_SCALAR_TYPES_SCHEMA, &input);
 
@@ -906,9 +906,9 @@ fn test_roundtrip_all_scalar_types() {
     assert_eq!(output["f_ulong"], json!(18000000000000000000u64));
 
     let f = output["f_float"].as_f64().unwrap();
-    assert!((f - 3.14).abs() < 0.01, "f_float={f}");
+    assert!((f - 3.125).abs() < 0.01, "f_float={f}");
     let d = output["f_double"].as_f64().unwrap();
-    assert!((d - 2.718281828).abs() < 0.000001, "f_double={d}");
+    assert!((d - 2.71).abs() < 0.000001, "f_double={d}");
 }
 
 #[test]
@@ -923,8 +923,8 @@ fn test_all_scalar_types_byte_coverage() {
         "f_uint": 4000000000u64,
         "f_long": -9000000000000i64,
         "f_ulong": 18000000000000000000u64,
-        "f_float": 3.14,
-        "f_double": 2.718281828
+        "f_float": 3.125,
+        "f_double": 2.71
     });
     let (binary, annotations) = encode_and_walk_from_fbs(ALL_SCALAR_TYPES_SCHEMA, &input);
 
@@ -1191,7 +1191,7 @@ fn test_generate_all_template_hex() {
                 "f_short": -1000, "f_ushort": 65535,
                 "f_int": -100000, "f_uint": 4000000000u64,
                 "f_long": -9000000000000i64, "f_ulong": 18000000000000000000u64,
-                "f_float": 3.14, "f_double": 2.718281828
+                "f_float": 3.125, "f_double": 2.71
             }),
         ),
         (
