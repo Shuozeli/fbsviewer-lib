@@ -330,8 +330,7 @@ impl VisualizerApp {
                 .expect("WASM: event target is not an HtmlInputElement");
             let files = target.files().expect("WASM: input element has no files");
             if let Some(file) = files.get(0) {
-                let reader =
-                    web_sys::FileReader::new().expect("WASM: failed to create FileReader");
+                let reader = web_sys::FileReader::new().expect("WASM: failed to create FileReader");
                 let reader_clone = reader.clone();
                 let sink = sink.clone();
 
@@ -375,14 +374,12 @@ impl VisualizerApp {
 pub(crate) fn execute_effect_pure(effect: Effect) -> Option<Command> {
     match effect {
         Effect::CompileSchema { source } => {
-            let result =
-                std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&source));
+            let result = std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&source));
             match result {
                 Ok(Ok(result)) => {
                     let root_name = extract_root_type_name(&result.schema);
                     let legacy = result.schema.as_legacy();
-                    let schema_json =
-                        serde_json::to_string_pretty(&legacy).unwrap_or_default();
+                    let schema_json = serde_json::to_string_pretty(&legacy).unwrap_or_default();
                     Some(Command::SchemaCompiled {
                         schema: Box::new(result.schema),
                         schema_json,
@@ -423,8 +420,7 @@ pub(crate) fn execute_effect_pure(effect: Effect) -> Option<Command> {
         } => match walk_binary(&binary, &schema, &root_type_name) {
             Ok(annotations) => {
                 let json_value = annotations_to_json(&annotations);
-                let decoded_json =
-                    serde_json::to_string_pretty(&json_value).unwrap_or_default();
+                let decoded_json = serde_json::to_string_pretty(&json_value).unwrap_or_default();
                 Some(Command::BinaryWalked {
                     annotations,
                     decoded_json,
@@ -467,8 +463,7 @@ pub(crate) fn execute_effect_pure(effect: Effect) -> Option<Command> {
             let fbs_text = flatc_rs_fbs_gen::SchemaBuilder::generate(seed, gen_config);
 
             let compile_result =
-                match std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&fbs_text))
-                {
+                match std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&fbs_text)) {
                     Ok(Ok(r)) => r,
                     Ok(Err(e)) => {
                         return Some(Command::RandomGenerateError(format!(
@@ -482,8 +477,7 @@ pub(crate) fn execute_effect_pure(effect: Effect) -> Option<Command> {
                     }
                 };
 
-            let root_type =
-                extract_root_type_name(&compile_result.schema).unwrap_or_default();
+            let root_type = extract_root_type_name(&compile_result.schema).unwrap_or_default();
 
             let legacy = compile_result.schema.as_legacy();
             let data_config = flatc_rs_data_gen::DataGenConfig::default();

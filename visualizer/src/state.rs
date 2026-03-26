@@ -191,6 +191,7 @@ const MAX_EVENT_LOG_ENTRIES: usize = 200;
 // TODO: expose event_log in a debug UI panel so it is consumed in production code.
 // Currently it is only read in tests.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct EventLogEntry {
     pub command: String,
     pub effects: Vec<String>,

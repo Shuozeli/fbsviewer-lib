@@ -71,7 +71,7 @@
 - **Location:** `visualizer/src/state.rs:192-196`
 - **Problem:** `EventLogEntry` is pushed into `event_log` (line 624) but `event_log` entries are never read in production code. This is genuine dead code being silenced. The VecDeque accumulates up to 200 entries consuming memory with no consumer.
 - **Fix:** Either expose the event log in the UI (e.g., a debug panel) or remove both the `#[allow(dead_code)]` and the `event_log` field. If keeping for future use, add a `// TODO: expose in debug UI` comment.
-- **Status:** Removed `#[allow(dead_code)]` and added `// TODO: expose event_log in a debug UI panel` comment. The struct is kept because it is used in tests (`test_event_log_records_commands`). The compiler warning for `effects` field remains as an honest signal.
+- **Status:** Added `// TODO: expose event_log in a debug UI panel` comment. `#[allow(dead_code)]` is retained on the struct because the fields are only read in tests; removing it triggers `-D warnings` in CI. The struct is kept because it is used in tests (`test_event_log_records_commands`).
 
 ### #[allow(dead_code)] on cjk_font_loaded -- DONE
 - **Location:** `visualizer/src/app.rs:28-29`
