@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use flatbuf_visualizer_core::{collect_proto_message_names, ProtoSchema, ResolvedSchema};
+use flatbuf_visualizer_core::{
+    collect_proto_message_names, extract_root_type_name, ProtoSchema, ResolvedSchema,
+};
 
 /// What kind of schema was loaded.
 pub enum LoadedSchema {
@@ -40,11 +42,7 @@ fn load_from_fbs(path: &Path, include_paths: &[PathBuf]) -> Result<LoadedSchema,
     let result = flatc_rs_compiler::compile(&[path.to_path_buf()], &options)
         .map_err(|e| format!("compilation failed: {e}"))?;
 
-    let root_type_name = result
-        .schema
-        .root_table_index
-        .and_then(|idx| result.schema.objects.get(idx))
-        .map(|obj| obj.name.clone());
+    let root_type_name = extract_root_type_name(&result.schema);
 
     Ok(LoadedSchema::FlatBuffers {
         schema: Box::new(result.schema),

@@ -1,5 +1,5 @@
 use egui::text::LayoutJob;
-use egui::{Color32, FontId, ScrollArea, TextFormat, Ui};
+use egui::{Color32, FontId, Pos2, Rect, ScrollArea, TextFormat, Ui};
 
 use flatbuf_visualizer_core::AnnotatedRegion;
 
@@ -9,6 +9,34 @@ pub struct HexViewOutput {
 }
 
 const BYTES_PER_ROW: usize = 16;
+
+/// Given a cursor position within a hex row, compute the byte index it corresponds to.
+/// Returns `None` if the position is outside the hex data area.
+fn byte_index_at_pos(
+    pos: Pos2,
+    rect: Rect,
+    row_start: usize,
+    char_width: f32,
+    data_len: usize,
+) -> Option<usize> {
+    // Address prefix is "XXXX: " = 6 chars
+    let addr_width = char_width * 6.0;
+    let hex_x = pos.x - rect.left() - addr_width;
+
+    if hex_x < 0.0 {
+        return None;
+    }
+    // Each hex byte is "XX " = 3 chars
+    let byte_col = (hex_x / (char_width * 3.0)) as usize;
+    if byte_col >= BYTES_PER_ROW {
+        return None;
+    }
+    let byte_idx = row_start + byte_col;
+    if byte_idx >= data_len {
+        return None;
+    }
+    Some(byte_idx)
+}
 
 pub fn show(
     ui: &mut Ui,
@@ -38,26 +66,16 @@ pub fn show(
                     hovered_region,
                 );
 
+                let font = FontId::monospace(13.0);
+                let char_width = ui.fonts(|f| f.glyph_width(&font, '0'));
+
                 // Detect which byte is under the cursor
                 if response.hovered() {
                     if let Some(pos) = response.hover_pos() {
-                        let rect = response.rect;
-                        let font = FontId::monospace(13.0);
-                        let char_width = ui.fonts(|f| f.glyph_width(&font, '0'));
-
-                        // Address prefix is "XXXX: " = 6 chars
-                        let addr_width = char_width * 6.0;
-                        let hex_x = pos.x - rect.left() - addr_width;
-
-                        if hex_x >= 0.0 {
-                            // Each hex byte is "XX " = 3 chars
-                            let byte_col = (hex_x / (char_width * 3.0)) as usize;
-                            if byte_col < BYTES_PER_ROW {
-                                let byte_idx = row_start + byte_col;
-                                if byte_idx < data.len() {
-                                    output.hovered_region = byte_to_region[byte_idx];
-                                }
-                            }
+                        if let Some(byte_idx) =
+                            byte_index_at_pos(pos, response.rect, row_start, char_width, data.len())
+                        {
+                            output.hovered_region = byte_to_region[byte_idx];
                         }
                     }
                 }
@@ -65,21 +83,10 @@ pub fn show(
                 // Detect click
                 if response.clicked() {
                     if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                        let rect = response.rect;
-                        let font = FontId::monospace(13.0);
-                        let char_width = ui.fonts(|f| f.glyph_width(&font, '0'));
-
-                        let addr_width = char_width * 6.0;
-                        let hex_x = pos.x - rect.left() - addr_width;
-
-                        if hex_x >= 0.0 {
-                            let byte_col = (hex_x / (char_width * 3.0)) as usize;
-                            if byte_col < BYTES_PER_ROW {
-                                let byte_idx = row_start + byte_col;
-                                if byte_idx < data.len() {
-                                    output.clicked_region = byte_to_region[byte_idx];
-                                }
-                            }
+                        if let Some(byte_idx) =
+                            byte_index_at_pos(pos, response.rect, row_start, char_width, data.len())
+                        {
+                            output.clicked_region = byte_to_region[byte_idx];
                         }
                     }
                 }

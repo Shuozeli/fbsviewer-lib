@@ -38,15 +38,10 @@ pub fn apply_filters(
     byte_range_str: Option<&str>,
     field_filter: Option<&str>,
     region_type_filter: Option<&str>,
-) -> Vec<usize> {
-    let byte_range = byte_range_str.map(|s| {
-        parse_byte_range(s).unwrap_or_else(|e| {
-            eprintln!("error: {e}");
-            std::process::exit(1);
-        })
-    });
+) -> Result<Vec<usize>, String> {
+    let byte_range = byte_range_str.map(parse_byte_range).transpose()?;
 
-    regions
+    Ok(regions
         .iter()
         .enumerate()
         .filter(|(_, region)| {
@@ -72,5 +67,5 @@ pub fn apply_filters(
             true
         })
         .map(|(i, _)| i)
-        .collect()
+        .collect())
 }

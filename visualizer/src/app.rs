@@ -7,8 +7,8 @@
 //! - Platform-specific code (file dialogs, WASM uploads, CJK font loading)
 
 use flatbuf_visualizer_core::{
-    annotations_to_json, collect_proto_message_names, encode_json, parse_hex_bytes, walk_binary,
-    walk_protobuf,
+    annotations_to_json, collect_proto_message_names, encode_json, extract_root_type_name,
+    parse_hex_bytes, walk_binary, walk_protobuf,
 };
 
 use crate::state::{AppState, Command, Effect};
@@ -24,8 +24,8 @@ pub struct VisualizerApp {
     /// Recursion depth guard for dispatch -> execute_effect -> dispatch chains.
     dispatch_depth: usize,
 
-    // CJK font loading
-    #[allow(dead_code)]
+    // CJK font loading (WASM only -- on native the font is loaded eagerly in the constructor)
+    #[cfg(target_arch = "wasm32")]
     cjk_font_loaded: bool,
     #[cfg(target_arch = "wasm32")]
     pending_cjk_font: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
@@ -39,6 +39,26 @@ pub struct VisualizerApp {
 
 const MAX_DISPATCH_DEPTH: usize = 8;
 
+/// Shared GenConfig used for random schema generation in both production and tests.
+pub(crate) fn default_gen_config() -> flatc_rs_fbs_gen::GenConfig {
+    flatc_rs_fbs_gen::GenConfig {
+        max_enums: 2,
+        max_structs: 2,
+        max_tables: 3,
+        max_unions: 1,
+        max_fields_per_type: 4,
+        use_namespace: false,
+        use_file_ident: false,
+        prob_deprecated: 0.0,
+        prob_null_default: 0.0,
+        prob_nan_inf_default: 0.0,
+        prob_rpc_service: 0.0,
+        prob_doc_comment: 0.0,
+        prob_fixed_array: 0.0,
+        ..flatc_rs_fbs_gen::GenConfig::default()
+    }
+}
+
 impl VisualizerApp {
     pub fn new(#[allow(unused_variables)] cc: &eframe::CreationContext<'_>) -> Self {
         Self::new_with_permalink(cc, None)
@@ -48,9 +68,10 @@ impl VisualizerApp {
         #[allow(unused_variables)] cc: &eframe::CreationContext<'_>,
         permalink_data: Option<String>,
     ) -> Self {
-        // Try to load CJK font on native
+        // Try to load CJK font eagerly on native (result not stored -- font is
+        // installed into the egui context as a side effect).
         #[cfg(not(target_arch = "wasm32"))]
-        let cjk_font_loaded = try_load_system_cjk_font(&cc.egui_ctx);
+        let _cjk_font_loaded = try_load_system_cjk_font(&cc.egui_ctx);
 
         #[cfg(target_arch = "wasm32")]
         let pending_cjk_font = {
@@ -74,8 +95,6 @@ impl VisualizerApp {
         let mut app = Self {
             state: AppState::default(),
             dispatch_depth: 0,
-            #[cfg(not(target_arch = "wasm32"))]
-            cjk_font_loaded,
             #[cfg(target_arch = "wasm32")]
             cjk_font_loaded: false,
             #[cfg(target_arch = "wasm32")]
@@ -117,118 +136,7 @@ impl VisualizerApp {
     /// Execute a single effect and dispatch the result command.
     fn execute_effect(&mut self, effect: Effect) {
         match effect {
-            Effect::CompileSchema { source } => {
-                let result =
-                    std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&source));
-                match result {
-                    Ok(Ok(result)) => {
-                        let root_name = result
-                            .schema
-                            .root_table_index
-                            .and_then(|idx| result.schema.objects.get(idx))
-                            .map(|obj| obj.name.clone());
-                        let legacy = result.schema.as_legacy();
-                        let schema_json = serde_json::to_string_pretty(&legacy).unwrap_or_default();
-                        self.dispatch(Command::SchemaCompiled {
-                            schema: Box::new(result.schema),
-                            schema_json,
-                            root_type_name: root_name,
-                        });
-                    }
-                    Ok(Err(e)) => {
-                        self.dispatch(Command::SchemaCompileError(e.to_string()));
-                    }
-                    Err(_) => {
-                        self.dispatch(Command::SchemaCompileError(
-                            "internal error: schema compiler panicked".to_string(),
-                        ));
-                    }
-                }
-            }
-
-            Effect::EncodeJson {
-                json_text,
-                schema,
-                root_type_name,
-            } => {
-                let json_value: serde_json::Value = match serde_json::from_str(&json_text) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        self.dispatch(Command::EncodeError(format!("Invalid JSON: {e}")));
-                        return;
-                    }
-                };
-                match encode_json(&json_value, &schema, &root_type_name) {
-                    Ok(binary) => {
-                        self.dispatch(Command::JsonEncoded(binary));
-                    }
-                    Err(e) => {
-                        self.dispatch(Command::EncodeError(e.to_string()));
-                    }
-                }
-            }
-
-            Effect::ParseHexData { hex_text } => match parse_hex_bytes(&hex_text) {
-                Ok(bytes) => {
-                    self.dispatch(Command::SetBinaryData(bytes));
-                }
-                Err(e) => {
-                    self.dispatch(Command::EncodeError(e.to_string()));
-                }
-            },
-
-            Effect::WalkBinary {
-                binary,
-                schema,
-                root_type_name,
-            } => match walk_binary(&binary, &schema, &root_type_name) {
-                Ok(annotations) => {
-                    let json_value = annotations_to_json(&annotations);
-                    let decoded_json =
-                        serde_json::to_string_pretty(&json_value).unwrap_or_default();
-                    self.dispatch(Command::BinaryWalked {
-                        annotations,
-                        decoded_json,
-                    });
-                }
-                Err(e) => {
-                    self.dispatch(Command::WalkError(e.to_string()));
-                }
-            },
-
-            Effect::CompileProtoSchema { source } => match protoc_rs_analyzer::analyze(&source) {
-                Ok(fds) => {
-                    let msg_names = collect_proto_message_names(&fds);
-                    let schema_json =
-                        format!("{} messages in {} files", msg_names.len(), fds.file.len());
-                    self.dispatch(Command::ProtoSchemaCompiled {
-                        schema: Box::new(fds),
-                        schema_json,
-                        root_message_names: msg_names,
-                    });
-                }
-                Err(e) => {
-                    self.dispatch(Command::SchemaCompileError(e.to_string()));
-                }
-            },
-
-            Effect::WalkProtobuf {
-                binary,
-                schema,
-                root_message,
-            } => match walk_protobuf(&binary, &schema, &root_message) {
-                Ok(annotations) => {
-                    let decoded_json = String::new(); // No JSON decode for protobuf yet
-                    self.dispatch(Command::BinaryWalked {
-                        annotations,
-                        decoded_json,
-                    });
-                }
-                Err(e) => {
-                    self.dispatch(Command::WalkError(e.to_string()));
-                }
-            },
-
+            // Platform effects are handled here (not in execute_effect_pure)
             Effect::CopyToClipboard { text } => {
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -275,64 +183,10 @@ impl VisualizerApp {
                 }
             }
 
-            Effect::GenerateRandomSchemaAndData { seed } => {
-                let gen_config = flatc_rs_fbs_gen::GenConfig {
-                    max_enums: 2,
-                    max_structs: 2,
-                    max_tables: 3,
-                    max_unions: 1,
-                    max_fields_per_type: 4,
-                    use_namespace: false,
-                    use_file_ident: false,
-                    prob_deprecated: 0.0,
-                    prob_null_default: 0.0,
-                    prob_nan_inf_default: 0.0,
-                    prob_rpc_service: 0.0,
-                    prob_doc_comment: 0.0,
-                    prob_fixed_array: 0.0,
-                    ..flatc_rs_fbs_gen::GenConfig::default()
-                };
-
-                let fbs_text = flatc_rs_fbs_gen::SchemaBuilder::generate(seed, gen_config);
-
-                let compile_result =
-                    match std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&fbs_text))
-                    {
-                        Ok(Ok(r)) => r,
-                        Ok(Err(e)) => {
-                            self.dispatch(Command::RandomGenerateError(format!(
-                                "Schema compile failed: {e}"
-                            )));
-                            return;
-                        }
-                        Err(_) => {
-                            self.dispatch(Command::RandomGenerateError(
-                                "Schema compiler panicked".to_string(),
-                            ));
-                            return;
-                        }
-                    };
-
-                let root_type = compile_result
-                    .schema
-                    .root_table_index
-                    .and_then(|idx| compile_result.schema.objects.get(idx))
-                    .map(|obj| obj.name.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let legacy = compile_result.schema.as_legacy();
-                let data_config = flatc_rs_data_gen::DataGenConfig::default();
-                match flatc_rs_data_gen::generate_json(&legacy, &root_type, seed, data_config) {
-                    Ok(json_text) => {
-                        self.dispatch(Command::RandomGenerated {
-                            schema_text: fbs_text,
-                            data_text: json_text,
-                        });
-                    }
-                    Err(e) => {
-                        self.dispatch(Command::RandomGenerateError(e.to_string()));
-                    }
+            // All non-platform effects are handled by the shared pure function
+            other => {
+                if let Some(cmd) = execute_effect_pure(other) {
+                    self.dispatch(cmd);
                 }
             }
         }
@@ -449,16 +303,18 @@ impl VisualizerApp {
         use wasm_bindgen::JsCast;
         use web_sys::HtmlInputElement;
 
-        let window = web_sys::window().unwrap();
-        let document = window.document().unwrap();
+        let window = web_sys::window().expect("WASM: no global window");
+        let document = window.document().expect("WASM: no document on window");
 
         let input: HtmlInputElement = document
             .create_element("input")
-            .unwrap()
+            .expect("WASM: failed to create <input> element")
             .dyn_into()
-            .unwrap();
+            .expect("WASM: created element is not an HtmlInputElement");
         input.set_type("file");
-        input.set_attribute("accept", accept).unwrap();
+        input
+            .set_attribute("accept", accept)
+            .expect("WASM: failed to set accept attribute");
 
         let sink = if is_binary {
             self.pending_binary_upload.clone()
@@ -467,33 +323,181 @@ impl VisualizerApp {
         };
 
         let closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
-            let target: HtmlInputElement = event.target().unwrap().dyn_into().unwrap();
-            let files = target.files().unwrap();
+            let target: HtmlInputElement = event
+                .target()
+                .expect("WASM: change event has no target")
+                .dyn_into()
+                .expect("WASM: event target is not an HtmlInputElement");
+            let files = target.files().expect("WASM: input element has no files");
             if let Some(file) = files.get(0) {
-                let reader = web_sys::FileReader::new().unwrap();
+                let reader =
+                    web_sys::FileReader::new().expect("WASM: failed to create FileReader");
                 let reader_clone = reader.clone();
                 let sink = sink.clone();
 
                 let onload = Closure::wrap(Box::new(move |_: web_sys::Event| {
-                    let result = reader_clone.result().unwrap();
-                    let array_buffer = result.dyn_into::<js_sys::ArrayBuffer>().unwrap();
+                    let result = reader_clone
+                        .result()
+                        .expect("WASM: FileReader result() failed");
+                    let array_buffer = result
+                        .dyn_into::<js_sys::ArrayBuffer>()
+                        .expect("WASM: FileReader result is not an ArrayBuffer");
                     let uint8_array = js_sys::Uint8Array::new(&array_buffer);
                     let mut data = vec![0u8; uint8_array.length() as usize];
                     uint8_array.copy_to(&mut data);
-                    *sink.lock().unwrap() = Some(data);
+                    *sink.lock().expect("WASM: upload sink mutex poisoned") = Some(data);
                 }) as Box<dyn FnMut(web_sys::Event)>);
 
                 reader.set_onload(Some(onload.as_ref().unchecked_ref()));
                 onload.forget();
-                reader.read_as_array_buffer(&file).unwrap();
+                reader
+                    .read_as_array_buffer(&file)
+                    .expect("WASM: read_as_array_buffer failed");
             }
         }) as Box<dyn FnMut(web_sys::Event)>);
 
         input
             .add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())
-            .unwrap();
+            .expect("WASM: failed to add change event listener");
         closure.forget();
         input.click();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure (non-platform) effect execution -- shared by production and tests
+// ---------------------------------------------------------------------------
+
+/// Execute a non-platform effect and return the resulting command, if any.
+///
+/// Platform effects ([`Effect::CopyToClipboard`], [`Effect::SetUrlQueryParam`])
+/// must be handled separately by the caller.
+pub(crate) fn execute_effect_pure(effect: Effect) -> Option<Command> {
+    match effect {
+        Effect::CompileSchema { source } => {
+            let result =
+                std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&source));
+            match result {
+                Ok(Ok(result)) => {
+                    let root_name = extract_root_type_name(&result.schema);
+                    let legacy = result.schema.as_legacy();
+                    let schema_json =
+                        serde_json::to_string_pretty(&legacy).unwrap_or_default();
+                    Some(Command::SchemaCompiled {
+                        schema: Box::new(result.schema),
+                        schema_json,
+                        root_type_name: root_name,
+                    })
+                }
+                Ok(Err(e)) => Some(Command::SchemaCompileError(e.to_string())),
+                Err(_) => Some(Command::SchemaCompileError(
+                    "internal error: schema compiler panicked".to_string(),
+                )),
+            }
+        }
+
+        Effect::EncodeJson {
+            json_text,
+            schema,
+            root_type_name,
+        } => {
+            let json_value: serde_json::Value = match serde_json::from_str(&json_text) {
+                Ok(v) => v,
+                Err(e) => return Some(Command::EncodeError(format!("Invalid JSON: {e}"))),
+            };
+            match encode_json(&json_value, &schema, &root_type_name) {
+                Ok(binary) => Some(Command::JsonEncoded(binary)),
+                Err(e) => Some(Command::EncodeError(e.to_string())),
+            }
+        }
+
+        Effect::ParseHexData { hex_text } => match parse_hex_bytes(&hex_text) {
+            Ok(bytes) => Some(Command::SetBinaryData(bytes)),
+            Err(e) => Some(Command::EncodeError(e.to_string())),
+        },
+
+        Effect::WalkBinary {
+            binary,
+            schema,
+            root_type_name,
+        } => match walk_binary(&binary, &schema, &root_type_name) {
+            Ok(annotations) => {
+                let json_value = annotations_to_json(&annotations);
+                let decoded_json =
+                    serde_json::to_string_pretty(&json_value).unwrap_or_default();
+                Some(Command::BinaryWalked {
+                    annotations,
+                    decoded_json,
+                })
+            }
+            Err(e) => Some(Command::WalkError(e.to_string())),
+        },
+
+        Effect::CompileProtoSchema { source } => match protoc_rs_analyzer::analyze(&source) {
+            Ok(fds) => {
+                let msg_names = collect_proto_message_names(&fds);
+                let schema_json =
+                    format!("{} messages in {} files", msg_names.len(), fds.file.len());
+                Some(Command::ProtoSchemaCompiled {
+                    schema: Box::new(fds),
+                    schema_json,
+                    root_message_names: msg_names,
+                })
+            }
+            Err(e) => Some(Command::SchemaCompileError(e.to_string())),
+        },
+
+        Effect::WalkProtobuf {
+            binary,
+            schema,
+            root_message,
+        } => match walk_protobuf(&binary, &schema, &root_message) {
+            Ok(annotations) => {
+                let decoded_json = String::new(); // No JSON decode for protobuf yet
+                Some(Command::BinaryWalked {
+                    annotations,
+                    decoded_json,
+                })
+            }
+            Err(e) => Some(Command::WalkError(e.to_string())),
+        },
+
+        Effect::GenerateRandomSchemaAndData { seed } => {
+            let gen_config = default_gen_config();
+            let fbs_text = flatc_rs_fbs_gen::SchemaBuilder::generate(seed, gen_config);
+
+            let compile_result =
+                match std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&fbs_text))
+                {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(e)) => {
+                        return Some(Command::RandomGenerateError(format!(
+                            "Schema compile failed: {e}"
+                        )));
+                    }
+                    Err(_) => {
+                        return Some(Command::RandomGenerateError(
+                            "Schema compiler panicked".to_string(),
+                        ));
+                    }
+                };
+
+            let root_type =
+                extract_root_type_name(&compile_result.schema).unwrap_or_default();
+
+            let legacy = compile_result.schema.as_legacy();
+            let data_config = flatc_rs_data_gen::DataGenConfig::default();
+            match flatc_rs_data_gen::generate_json(&legacy, &root_type, seed, data_config) {
+                Ok(json_text) => Some(Command::RandomGenerated {
+                    schema_text: fbs_text,
+                    data_text: json_text,
+                }),
+                Err(e) => Some(Command::RandomGenerateError(e.to_string())),
+            }
+        }
+
+        // Platform effects return None -- they are handled by the app runtime
+        Effect::CopyToClipboard { .. } | Effect::SetUrlQueryParam { .. } => None,
     }
 }
 

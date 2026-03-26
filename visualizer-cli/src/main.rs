@@ -119,12 +119,18 @@ fn main() {
     };
 
     // 4. Apply filters
-    let filtered = filter::apply_filters(
+    let filtered = match filter::apply_filters(
         &regions,
         cli.byte_range.as_deref(),
         cli.field.as_deref(),
         cli.region_type.as_deref(),
-    );
+    ) {
+        Ok(indices) => indices,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+    };
 
     // 5. Render output
     output::render(&regions, &filtered, &cli.format);

@@ -188,8 +188,9 @@ impl std::fmt::Display for Effect {
 
 const MAX_EVENT_LOG_ENTRIES: usize = 200;
 
+// TODO: expose event_log in a debug UI panel so it is consumed in production code.
+// Currently it is only read in tests.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct EventLogEntry {
     pub command: String,
     pub effects: Vec<String>,
@@ -746,166 +747,15 @@ pub fn detect_schema_format(text: &str) -> SchemaFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flatbuf_visualizer_core::{
-        annotations_to_json, collect_proto_message_names, encode_json, parse_hex_bytes,
-        walk_binary, walk_protobuf,
-    };
 
     /// Execute a command and recursively resolve all effects using real
     /// compiler/encoder/walker implementations.
     fn run_with_effects(state: &mut AppState, cmd: Command) {
         let effects = state.dispatch(cmd);
         for effect in effects {
-            let result_cmd = execute_effect_sync(effect);
-            if let Some(cmd) = result_cmd {
+            if let Some(cmd) = crate::app::execute_effect_pure(effect) {
                 run_with_effects(state, cmd);
             }
-        }
-    }
-
-    fn execute_effect_sync(effect: Effect) -> Option<Command> {
-        match effect {
-            Effect::CompileSchema { source } => {
-                let result =
-                    std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&source));
-                match result {
-                    Ok(Ok(result)) => {
-                        let root_name = result
-                            .schema
-                            .root_table_index
-                            .and_then(|idx| result.schema.objects.get(idx))
-                            .map(|obj| obj.name.clone());
-                        let legacy = result.schema.as_legacy();
-                        let schema_json = serde_json::to_string_pretty(&legacy).unwrap_or_default();
-                        Some(Command::SchemaCompiled {
-                            schema: Box::new(result.schema),
-                            schema_json,
-                            root_type_name: root_name,
-                        })
-                    }
-                    Ok(Err(e)) => Some(Command::SchemaCompileError(e.to_string())),
-                    Err(_) => Some(Command::SchemaCompileError(
-                        "internal error: schema compiler panicked".to_string(),
-                    )),
-                }
-            }
-            Effect::EncodeJson {
-                json_text,
-                schema,
-                root_type_name,
-            } => {
-                let json_value: serde_json::Value = match serde_json::from_str(&json_text) {
-                    Ok(v) => v,
-                    Err(e) => return Some(Command::EncodeError(format!("Invalid JSON: {e}"))),
-                };
-                match encode_json(&json_value, &schema, &root_type_name) {
-                    Ok(binary) => Some(Command::JsonEncoded(binary)),
-                    Err(e) => Some(Command::EncodeError(e.to_string())),
-                }
-            }
-            Effect::ParseHexData { hex_text } => match parse_hex_bytes(&hex_text) {
-                Ok(bytes) => Some(Command::SetBinaryData(bytes)),
-                Err(e) => Some(Command::EncodeError(e.to_string())),
-            },
-            Effect::WalkBinary {
-                binary,
-                schema,
-                root_type_name,
-            } => match walk_binary(&binary, &schema, &root_type_name) {
-                Ok(annotations) => {
-                    let json_value = annotations_to_json(&annotations);
-                    let decoded_json =
-                        serde_json::to_string_pretty(&json_value).unwrap_or_default();
-                    Some(Command::BinaryWalked {
-                        annotations,
-                        decoded_json,
-                    })
-                }
-                Err(e) => Some(Command::WalkError(e.to_string())),
-            },
-            Effect::GenerateRandomSchemaAndData { seed } => {
-                let gen_config = flatc_rs_fbs_gen::GenConfig {
-                    max_enums: 2,
-                    max_structs: 2,
-                    max_tables: 3,
-                    max_unions: 1,
-                    max_fields_per_type: 4,
-                    use_namespace: false,
-                    use_file_ident: false,
-                    prob_deprecated: 0.0,
-                    prob_null_default: 0.0,
-                    prob_nan_inf_default: 0.0,
-                    prob_rpc_service: 0.0,
-                    prob_doc_comment: 0.0,
-                    prob_fixed_array: 0.0,
-                    ..flatc_rs_fbs_gen::GenConfig::default()
-                };
-
-                let fbs_text = flatc_rs_fbs_gen::SchemaBuilder::generate(seed, gen_config);
-
-                let compile_result =
-                    match std::panic::catch_unwind(|| flatc_rs_compiler::compile_single(&fbs_text))
-                    {
-                        Ok(Ok(r)) => r,
-                        Ok(Err(e)) => {
-                            return Some(Command::RandomGenerateError(format!(
-                                "Schema compile failed: {e}"
-                            )));
-                        }
-                        Err(_) => {
-                            return Some(Command::RandomGenerateError(
-                                "Schema compiler panicked".to_string(),
-                            ));
-                        }
-                    };
-
-                let root_type = compile_result
-                    .schema
-                    .root_table_index
-                    .and_then(|idx| compile_result.schema.objects.get(idx))
-                    .map(|obj| obj.name.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let legacy = compile_result.schema.as_legacy();
-                let data_config = flatc_rs_data_gen::DataGenConfig::default();
-                match flatc_rs_data_gen::generate_json(&legacy, &root_type, seed, data_config) {
-                    Ok(json_text) => Some(Command::RandomGenerated {
-                        schema_text: fbs_text,
-                        data_text: json_text,
-                    }),
-                    Err(e) => Some(Command::RandomGenerateError(e.to_string())),
-                }
-            }
-            Effect::CompileProtoSchema { source } => match protoc_rs_analyzer::analyze(&source) {
-                Ok(fds) => {
-                    let msg_names = collect_proto_message_names(&fds);
-                    let schema_json =
-                        serde_json::to_string_pretty(&"<protobuf schema>").unwrap_or_default();
-                    Some(Command::ProtoSchemaCompiled {
-                        schema: Box::new(fds),
-                        schema_json,
-                        root_message_names: msg_names,
-                    })
-                }
-                Err(e) => Some(Command::SchemaCompileError(e.to_string())),
-            },
-            Effect::WalkProtobuf {
-                binary,
-                schema,
-                root_message,
-            } => match walk_protobuf(&binary, &schema, &root_message) {
-                Ok(annotations) => {
-                    let decoded_json = String::new(); // No JSON decode for protobuf yet
-                    Some(Command::BinaryWalked {
-                        annotations,
-                        decoded_json,
-                    })
-                }
-                Err(e) => Some(Command::WalkError(e.to_string())),
-            },
-            // Platform effects are no-ops in tests
-            Effect::CopyToClipboard { .. } | Effect::SetUrlQueryParam { .. } => None,
         }
     }
 

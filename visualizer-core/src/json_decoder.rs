@@ -173,11 +173,7 @@ fn vector_element_value(annotations: &[AnnotatedRegion], elem_idx: usize) -> Val
 
 fn field_name_from_path(path: &[String], fallback: &str) -> String {
     // path is like ["Monster", "pos"] -- use last component
-    if path.len() >= 2 {
-        path.last().unwrap().clone()
-    } else {
-        fallback.to_string()
-    }
+    path.last().cloned().unwrap_or_else(|| fallback.to_string())
 }
 
 fn parse_scalar_value(value_display: &str) -> Value {

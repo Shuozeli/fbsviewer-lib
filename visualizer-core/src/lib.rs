@@ -21,6 +21,17 @@ pub use flatc_rs_schema::resolved::ResolvedSchema;
 // Re-export protobuf schema types so UI crates don't need direct deps
 pub use protoc_rs_schema::FileDescriptorSet as ProtoSchema;
 
+/// Extract the root type name from a compiled FlatBuffers schema.
+///
+/// Returns `Some(name)` if the schema has a `root_table_index` pointing to a
+/// valid object, `None` otherwise.
+pub fn extract_root_type_name(schema: &ResolvedSchema) -> Option<String> {
+    schema
+        .root_table_index
+        .and_then(|idx| schema.objects.get(idx))
+        .map(|obj| obj.name.clone())
+}
+
 /// Collect fully-qualified message names from a `FileDescriptorSet`.
 ///
 /// Returns names like `".package.MessageName"` for each top-level message.

@@ -294,6 +294,12 @@ impl<'a> Encoder<'a> {
                     table_data_size += 1;
                 }
             }
+            if slot.field_id >= num_vtable_entries {
+                return Err(JsonEncodeError::ObjectIndexOutOfRange {
+                    index: slot.field_id,
+                    count: num_vtable_entries,
+                });
+            }
             field_offsets_in_table[slot.field_id] = table_data_size as u16;
             table_data_size += slot.size;
         }
